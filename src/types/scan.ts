@@ -1,0 +1,112 @@
+export type ScanStatus = 'idle' | 'queued' | 'scanning' | 'completed' | 'failed' | 'cancelled';
+
+export type ObservationType = 'log' | 'info' | 'warn' | 'error';
+
+export interface ConsoleObservation {
+  id: string;
+  type: ObservationType;
+  message: string;
+  pageUrl: string;
+  timestamp: string;
+  source?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface RuntimeIssue {
+  id: string;
+  message: string;
+  pageUrl: string;
+  stack?: string;
+  timestamp: string;
+  severity: 'critical' | 'warning';
+}
+
+export interface NetworkIssue {
+  id: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  url: string;
+  status: number;
+  duration: number; // ms
+  pageUrl: string;
+  type: 'failed' | 'slow' | 'broken-asset' | 'ok';
+}
+
+export interface PerformanceMetrics {
+  lcp: number; // Largest Contentful Paint (s)
+  fcp: number; // First Contentful Paint (s)
+  cls: number; // Cumulative Layout Shift
+  inp: number; // Interaction to Next Paint (ms)
+  ttfb: number; // Time to First Byte (ms)
+}
+
+export interface PerformanceLabels {
+  lcp: string;
+  fcp: string;
+  cls: string;
+  inp: string;
+  ttfb: string;
+}
+
+export interface AccessibilityIssue {
+  id: string;
+  impact: 'critical' | 'serious' | 'moderate' | 'minor';
+  description: string;
+  selector: string;
+  pageUrl: string;
+}
+
+export interface PageResult {
+  id: string;
+  url: string;
+  title: string;
+  status: 'healthy' | 'warning' | 'error';
+  issuesCount: number;
+  duration: number;
+}
+
+export interface ScanResult {
+  id: string;
+  url: string;
+  normalizedUrl: string;
+  status: ScanStatus;
+  startedAt: string;
+  completedAt?: string;
+  pagesScanned: number;
+  totalPages: number;
+  healthScore: number;
+  previousScore?: number;
+  summary: {
+    consoleCount: number;
+    runtimeCount: number;
+    networkCount: number;
+    assetsCount: number;
+    performanceRating: string;
+    accessibilityCount: number;
+  };
+  consoleObservations: ConsoleObservation[];
+  runtimeIssues: RuntimeIssue[];
+  networkIssues: NetworkIssue[];
+  performanceMetrics: PerformanceMetrics;
+  performanceLabels?: PerformanceLabels;
+  accessibilityIssues: AccessibilityIssue[];
+  pages: PageResult[];
+  errorMessage?: string;
+}
+
+export interface ScanConfiguration {
+  url: string;
+  options: {
+    consoleOutput: boolean;
+    jsErrors: boolean;
+    networkFailures: boolean;
+    brokenAssets: boolean;
+    performance: boolean;
+    accessibility: boolean;
+  };
+  advanced: {
+    maxPages: number;
+    interactionDepth: 'standard' | 'deep' | 'minimal';
+    device: 'mobile' | 'desktop';
+  };
+}

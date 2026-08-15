@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trace
+      POSTGRES_PASSWORD: trace
+      POSTGRES_DB: trace
+    ports:
+      - "5432:5432"
+    volumes:
+      - trace_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trace -d trace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "tsx", "server/src/api/index.ts"]
+    environment:
+      DATABASE_URL: postgres://trace:trace@postgres:5432/trace
+      REDIS_URL: redis://redis:6379
+      API_PORT: 3001
+      ALLOW_LOCAL_TARGETS: "false"
+      ARTIFACT_DIR: /app/artifacts
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - trace_artifacts:/app/artifacts
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "tsx", "server/src/worker/index.ts"]
+    environment:
+      DATABASE_URL: postgres://trace:trace@postgres:5432/trace
+      REDIS_URL: redis://redis:6379
+      ALLOW_LOCAL_TARGETS: "false"
+      SCAN_BROWSER_CONCURRENCY: "1"
+      ARTIFACT_DIR: /app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - trace_artifacts:/app/artifacts
+    shm_size: "1gb"
+
+volumes:
+  trace_pg:
+  trace_artifacts:
