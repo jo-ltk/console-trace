@@ -82,12 +82,17 @@ export function createScanWorker() {
           url,
           options,
           onProgress: async (status) => {
+            if (await isCancelled(scanId)) return;
             await updateScanStatus(scanId, status);
             await publishProgress(scanId, status);
             await job.updateProgress({ status });
           },
           shouldCancel: () => isCancelled(scanId),
         });
+        if (await isCancelled(scanId)) {
+          await updateScanStatus(scanId, 'cancelled', { reason: 'Cancelled by client' });
+          return;
+        }
         await completeScan(scanId, result);
         try {
           await writeArtifacts(scanId, result);
