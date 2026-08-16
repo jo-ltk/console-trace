@@ -128,6 +128,28 @@ If a subsystem cannot run, TRACE reports `NOT TESTED` / `UNAVAILABLE` and may co
 - Accessibility uses axe-core on rendered pages; keyboard issues that require a human are not fully covered.
 - Rate limits and page caps prevent using TRACE as a DoS tool.
 
+## Docker (production-like)
+
+```bash
+# Standard bridge networking (works on most hosts)
+npm run docker:stack
+
+# Host-network smoke stack (for VMs with limited bridge/overlay support)
+npm run docker:smoke-stack
+
+# Run a real public scan through the containerized API + worker
+npm run docker:smoke
+
+# Tear down
+npm run docker:smoke-down   # or npm run docker:down
+```
+
+The smoke test executes:
+
+`POST /api/scans → Redis/BullMQ → Worker → Playwright Chromium → PostgreSQL → GET /api/scans/:id/results`
+
+against `https://example.com` by default. Override with `SMOKE_SCAN_URL`.
+
 ## Testing
 
 ```bash
