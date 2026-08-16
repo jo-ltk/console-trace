@@ -2,6 +2,7 @@
   "expo": {
     "name": "TRACE",
     "slug": "trace-inspector",
+    "owner": "jo-ltks-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -34,6 +35,11 @@
     "experiments": {
       "typedRoutes": true
     },
-    "scheme": "trace"
+    "scheme": "trace",
+    "extra": {
+      "eas": {
+        "projectId": "58c80da3-b17a-4e3c-a9fd-3b7168f9f0ee"
+      }
+    }
   }
 }
