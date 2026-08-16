@@ -131,11 +131,25 @@ If a subsystem cannot run, TRACE reports `NOT TESTED` / `UNAVAILABLE` and may co
 ## Testing
 
 ```bash
+# Unit + browser fixture (no Postgres/Redis required)
 npm run test:unit
-npm run test:e2e          # real Chromium vs test-fixture/
-npm run test:integration  # requires DATABASE_URL + Redis
-npm run verify
+npm run test:e2e
+
+# Full pipeline (requires PostgreSQL + Redis)
+docker compose up -d postgres redis   # or local install
+npm run migrate
+DATABASE_URL=postgres://trace:trace@localhost:5432/trace \
+REDIS_URL=redis://localhost:6379 \
+npm run test:integration
+
+npm run verify   # all suites; integration auto-skips if DB/Redis unavailable
 ```
+
+Integration tests exercise the complete path:
+
+`POST /api/scans → BullMQ → Worker → Playwright → PostgreSQL → GET /api/scans/:id/results`
+
+Including cancellation, concurrent scans, SSRF rejection, timeout handling, and mobile adapter mapping.
 
 The fixture at `test-fixture/` is **only** for automated tests. It contains intentional console errors, uncaught exceptions, 500 APIs, 404 assets, and accessibility defects. The production scanner has no hard-coded fixture results.
 

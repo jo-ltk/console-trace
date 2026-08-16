@@ -96,6 +96,11 @@ pages['/performance'] = {
   ),
 };
 
+pages['/hang'] = {
+  type: 'text/html',
+  body: html('Hang', '<h1>Hang</h1><p>slow page</p>'),
+};
+
 pages['/forms'] = {
   type: 'text/html',
   body: html(
@@ -135,6 +140,13 @@ export function startFixture(port = 0): Promise<{ server: http.Server; port: num
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end('{"slow":true}');
       }, 400);
+      return;
+    }
+    if (url === '/hang') {
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><body>finally</body></html>');
+      }, 5000);
       return;
     }
     const page = pages[url];

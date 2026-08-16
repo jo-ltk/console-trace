@@ -34,18 +34,22 @@ function resultOf(row: { result: ScanResult | string | null; id: string; status:
   return typeof row.result === 'string' ? (JSON.parse(row.result) as ScanResult) : (row.result as ScanResult);
 }
 
-export async function buildApp() {
+export async function buildApp(opts?: { disableRateLimit?: boolean }) {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: true });
-  await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+  if (!opts?.disableRateLimit) {
+    await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+  }
 
   app.get('/health', async () => ({ ok: true, metrics: snapshotMetrics() }));
 
   app.post(
     '/api/scans',
-    {
-      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-    },
+    opts?.disableRateLimit
+      ? {}
+      : {
+          config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+        },
     async (req, reply) => {
       const parsed = ScanBody.safeParse(req.body);
       if (!parsed.success) {

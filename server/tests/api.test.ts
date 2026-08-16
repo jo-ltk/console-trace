@@ -1,23 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/api/index.ts';
-import { migrate, pool } from '../src/db/pool.ts';
 import type { FastifyInstance } from 'fastify';
+import { buildApp } from '../src/api/index.ts';
+import { migrate } from '../src/db/pool.ts';
+import { applyIntegrationEnv, servicesAvailable } from './helpers/services.ts';
 
-const hasDb = Boolean(process.env.DATABASE_URL || process.env.RUN_API_TESTS === '1');
+const servicesUp = await servicesAvailable();
 
-describe.skipIf(!hasDb && process.env.CI !== '1')('scan API', () => {
+describe.skipIf(!servicesUp)('scan API (validation)', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
+    applyIntegrationEnv();
     process.env.ALLOW_LOCAL_TARGETS = 'false';
     await migrate();
-    app = await buildApp();
+    app = await buildApp({ disableRateLimit: true });
     await app.ready();
   });
 
   afterAll(async () => {
     await app.close();
-    await pool.end();
   });
 
   it('rejects invalid url', async () => {

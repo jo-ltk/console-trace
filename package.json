@@ -12,7 +12,7 @@
     "worker": "tsx server/src/worker/index.ts",
     "test": "vitest run",
     "test:unit": "vitest run server/tests/unit.test.ts",
-    "test:integration": "vitest run server/tests/api.test.ts",
+    "test:integration": "vitest run server/tests/api.test.ts server/tests/integration.pipeline.test.ts",
     "test:e2e": "vitest run server/tests/e2e.fixture.test.ts",
     "test:fixture": "tsx test-fixture/server.ts",
     "lint": "eslint server test-fixture",
