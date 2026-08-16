@@ -1,0 +1,9 @@
+node_modules
+.expo
+dist
+artifacts
+.git
+.env
+*.log
+coverage
+.DS_Store

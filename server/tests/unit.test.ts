@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { inCidr, isBlockedIp, isPrivateOrReservedIPv4 } from '../src/security/private-ip.ts';
-import { assertSafeUrl, normalizeScanUrl, SsrfError } from '../src/security/ssrf.ts';
+import { assertSafeUrl, assertSafeRedirect, normalizeScanUrl, SsrfError } from '../src/security/ssrf.ts';
 import { looksLikeSecret, looksLikeTokenKey, redactHeaders, redactUrl } from '../src/security/redact.ts';
 import { normalizePageUrl, sameOrigin } from '../src/url/normalize.ts';
 import { robotsBlocked, parseRobots, isBenignRequestFailure } from '../src/analysis/network.ts';
@@ -50,6 +50,22 @@ describe('SSRF / IP ranges', () => {
   });
   it('rejects metadata host', async () => {
     await expect(assertSafeUrl('http://metadata.google.internal/', { allowLocal: true })).rejects.toBeInstanceOf(SsrfError);
+  });
+  it('blocks DNS rebinding to private IP', async () => {
+    const resolver = await import('../src/security/dns-resolver.ts');
+    const spy = vi.spyOn(resolver, 'lookupAll').mockResolvedValue([{ address: '10.0.0.99', family: 4 }]);
+    await expect(assertSafeUrl('http://rebind.example.com/')).rejects.toBeInstanceOf(SsrfError);
+    spy.mockRestore();
+  });
+  it('blocks IPv6 loopback literal', async () => {
+    await expect(assertSafeUrl('http://[::1]/', { allowLocal: false })).rejects.toBeInstanceOf(SsrfError);
+  });
+  it('blocks redirect validation to private IP', async () => {
+    await expect(assertSafeRedirect('http://127.0.0.1/', { allowLocal: false })).rejects.toBeInstanceOf(SsrfError);
+    await expect(assertSafeRedirect('http://10.0.0.1/', { allowLocal: false })).rejects.toBeInstanceOf(SsrfError);
+  });
+  it('blocks link-local IPv6', () => {
+    expect(isBlockedIp('fe80::1')).toBe(true);
   });
 });
 

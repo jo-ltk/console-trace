@@ -1,5 +1,5 @@
-import dns from 'node:dns/promises';
 import net from 'node:net';
+import { lookupAll } from './dns-resolver.ts';
 import { isBlockedIp, isMetadataHost } from './private-ip.ts';
 
 export class SsrfError extends Error {
@@ -61,7 +61,7 @@ export async function assertSafeUrl(raw: string, opts?: { allowLocal?: boolean }
 
   let records: { address: string; family: number }[];
   try {
-    records = await dns.lookup(hostname, { all: true, verbatim: true });
+    records = await lookupAll(hostname);
   } catch {
     throw new SsrfError('DNS resolution failed');
   }

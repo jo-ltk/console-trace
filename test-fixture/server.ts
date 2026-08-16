@@ -132,9 +132,39 @@ pages['/manifest.json'] = {
   body: '{"name":"Fixture","short_name":"Fix","display":"standalone","icons":[{"src":"/images/dot.png","sizes":"1x1"}]}',
 };
 
+for (let i = 1; i <= 25; i++) {
+  const next = i < 25 ? `<a href="/large/page/${i + 1}">next</a>` : '';
+  pages[`/large/page/${i}`] = {
+    type: 'text/html',
+    body: html(
+      `Large ${i}`,
+      `<h1>Large page ${i}</h1>${next}<script>console.log('large-page-${i}')</script>`,
+    ),
+  };
+}
+pages['/large'] = {
+  type: 'text/html',
+  body: html('Large index', '<a href="/large/page/1">start crawl</a>'),
+};
+
 export function startFixture(port = 0): Promise<{ server: http.Server; port: number; url: string }> {
   const server = http.createServer((req, res) => {
     const url = req.url?.split('?')[0] ?? '/';
+    if (url === '/redirect-private') {
+      res.writeHead(302, { Location: 'http://127.0.0.1/' });
+      res.end();
+      return;
+    }
+    if (url === '/redirect-loop-a') {
+      res.writeHead(302, { Location: '/redirect-loop-b' });
+      res.end();
+      return;
+    }
+    if (url === '/redirect-loop-b') {
+      res.writeHead(302, { Location: '/redirect-loop-a' });
+      res.end();
+      return;
+    }
     if (url === '/slow') {
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });

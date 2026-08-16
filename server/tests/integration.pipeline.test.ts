@@ -189,6 +189,7 @@ describe.skipIf(!servicesUp)('integration suite', () => {
       'http://192.168.1.1/',
       'http://172.16.0.1/',
       'http://169.254.169.254/',
+      'http://[::1]/',
       'file:///etc/passwd',
       'http://metadata.google.internal/',
     ];
