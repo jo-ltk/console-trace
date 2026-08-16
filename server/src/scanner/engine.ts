@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createRequire } from 'node:module';
-import { chromium, type Browser, type BrowserContext, type Page, type Request } from 'playwright';
+import { type Browser, type BrowserContext, type Page, type Request } from 'playwright';
+import { createScanContext, launchBrowser } from './browser.ts';
+import { runAccessibilityScan } from './accessibility.ts';
 import type {
   AccessibilityFinding,
   ConsoleEvent,
@@ -58,8 +59,6 @@ import {
 } from '../analysis/network.ts';
 import { computeHealthScores, dedupeIssues, severityForIssue } from '../scoring/health.ts';
 
-const require = createRequire(import.meta.url);
-
 export type ProgressFn = (status: ScanStatus, extra?: Record<string, unknown>) => Promise<void> | void;
 
 export interface EngineInput {
@@ -69,22 +68,6 @@ export interface EngineInput {
   onProgress?: ProgressFn;
   shouldCancel?: () => Promise<boolean> | boolean;
 }
-
-const MOBILE = {
-  viewport: { width: 393, height: 851 },
-  userAgent:
-    'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 TRACE/1.0',
-  isMobile: true,
-  hasTouch: true,
-};
-
-const DESKTOP = {
-  viewport: { width: 1440, height: 900 },
-  userAgent:
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 TRACE/1.0',
-  isMobile: false,
-  hasTouch: false,
-};
 
 function id(): string {
   return randomUUID();
@@ -139,19 +122,10 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
 
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
-  const device = opts.device === 'desktop' ? DESKTOP : MOBILE;
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--disable-dev-shm-usage'],
-    });
-    context = await browser.newContext({
-      ...device,
-      javaScriptEnabled: true,
-      ignoreHTTPSErrors: false,
-      serviceWorkers: 'allow',
-    });
+    browser = await launchBrowser();
+    context = await createScanContext(browser, { device: opts.device, timeout: opts.timeout });
     await context.addInitScript(() => {
       window.addEventListener('unhandledrejection', (ev) => {
         const reason = ev.reason;
@@ -348,31 +322,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
         if (opts.accessibility) {
           await input.onProgress?.('running_accessibility');
           try {
-            const axePath = require.resolve('axe-core/axe.min.js');
-            await page.addScriptTag({ path: axePath });
-            const axeResults = await page.evaluate(async () => {
-              return await (window as unknown as { axe: { run: () => Promise<{ violations: Array<{
-                id: string;
-                impact?: string;
-                description: string;
-                helpUrl: string;
-                nodes: Array<{ html: string; target: string[] }>;
-              }> }> } }).axe.run();
-            });
-            for (const v of axeResults.violations) {
-              for (const node of v.nodes.slice(0, 10)) {
-                accessibility.push({
-                  id: id(),
-                  rule: v.id,
-                  impact: (v.impact as AccessibilityFinding['impact']) || 'moderate',
-                  description: v.description,
-                  helpUrl: v.helpUrl,
-                  elementHtml: node.html.slice(0, 500),
-                  selector: node.target.join(' '),
-                  pageUrl: url,
-                });
-              }
-            }
+            accessibility.push(...(await runAccessibilityScan(page, url, id)));
           } catch (err) {
             unavailable.accessibility = (err as Error).message;
             warnings.push(`accessibility FAILED: ${(err as Error).message}`);

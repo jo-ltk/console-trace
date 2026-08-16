@@ -23,10 +23,12 @@
     "docker:up": "docker compose up -d postgres redis"
   },
   "dependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@expo/metro-runtime": "~4.0.1",
     "@fastify/cors": "^11.3.0",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.3",
+    "@playwright/test": "^1.62.1",
     "@tanstack/react-query": "^5.66.0",
     "@types/node": "^26.2.0",
     "@types/pg": "^8.21.0",
