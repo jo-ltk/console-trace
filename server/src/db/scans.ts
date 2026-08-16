@@ -20,7 +20,8 @@ export async function updateScanStatus(
   extra?: { reason?: string; startedAt?: Date },
 ): Promise<void> {
   await pool.query(
-    `UPDATE scans SET status = $2, status_reason = COALESCE($3, status_reason), started_at = COALESCE($4, started_at), updated_at = now() WHERE id = $1`,
+    `UPDATE scans SET status = $2, status_reason = COALESCE($3, status_reason), started_at = COALESCE($4, started_at), updated_at = now()
+     WHERE id = $1 AND (status <> 'cancelled' OR $2 = 'cancelled')`,
     [id, status, extra?.reason ?? null, extra?.startedAt ?? null],
   );
 }
@@ -36,7 +37,7 @@ export async function completeScan(id: string, result: ScanResult): Promise<void
       completed_at = $7,
       duration_ms = $8,
       updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'cancelled'`,
     [
       id,
       result.scan.status,
