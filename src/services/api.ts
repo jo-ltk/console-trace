@@ -2,13 +2,12 @@ import Constants from 'expo-constants';
 
 const extra = Constants.expoConfig?.extra as { apiUrl?: string } | undefined;
 
+/** Public TRACE API. Never put DATABASE_URL / REDIS_URL here. */
+export const PRODUCTION_API_URL = 'https://trace-api-15uf.onrender.com';
+
 function resolveApiBaseUrl(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl;
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
-  if (typeof __DEV__ !== 'undefined' && __DEV__) {
-    return 'http://localhost:3001';
-  }
-  throw new Error('EXPO_PUBLIC_API_URL must be set for production builds');
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl || PRODUCTION_API_URL;
+  return fromEnv.replace(/\/$/, '');
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();

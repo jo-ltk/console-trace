@@ -128,7 +128,7 @@ export function toClientScan(raw: Record<string, unknown>): ClientScan {
   };
 }
 
-function mapFinding(f: Record<string, unknown>): ClientFinding {
+export function mapFinding(f: Record<string, unknown>): ClientFinding {
   const location = (f.location ?? {}) as Record<string, unknown>;
   const evidence = (f.evidence ?? {}) as Record<string, unknown>;
   return {

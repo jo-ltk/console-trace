@@ -10,7 +10,7 @@ import { TraceCard } from '../../components/ui/TraceCard';
 import { TraceButton } from '../../components/ui/TraceButton';
 import { useAppStore } from '../../stores/useAppStore';
 import { api } from '../../services/api';
-import { toClientScan } from '../../services/adapter';
+import { toClientScan, mapFinding } from '../../services/adapter';
 import type { ClientFinding, FindingSeverity, ScanResult } from '../../types/scan';
 
 function severityColor(severity: FindingSeverity): string {
@@ -29,15 +29,25 @@ export default function FindingDetailScreen() {
 
   useEffect(() => {
     if (!params.scanId) return;
+    const scanId = params.scanId;
     if (scan?.findings?.length) return;
     api
-      .getResults(params.scanId)
-      .then((raw) => {
-        if (raw && (raw as { scan?: unknown }).scan) {
-          const mapped = toClientScan(raw as Record<string, unknown>);
-          setScan(mapped);
-          addRecentScan(mapped);
+      .getResults(scanId)
+      .then(async (raw) => {
+        if (!raw) return;
+        const mapped = toClientScan(raw as Record<string, unknown>);
+        try {
+          const payload = (await api.getFindings(scanId)) as {
+            findings?: Array<Record<string, unknown>>;
+          };
+          if (Array.isArray(payload.findings) && payload.findings.length) {
+            mapped.findings = payload.findings.map(mapFinding);
+          }
+        } catch {
+          /* results payload already includes findings */
         }
+        setScan(mapped);
+        addRecentScan(mapped);
       })
       .catch(() => undefined);
   }, [params.scanId]);

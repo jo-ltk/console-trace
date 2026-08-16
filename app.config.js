@@ -5,7 +5,7 @@ module.exports = {
     ...appJson.expo,
     extra: {
       ...(appJson.expo.extra || {}),
-      apiUrl: process.env.EXPO_PUBLIC_API_URL || undefined,
+      apiUrl: process.env.EXPO_PUBLIC_API_URL || 'https://trace-api-15uf.onrender.com',
     },
     android: {
       ...appJson.expo.android,

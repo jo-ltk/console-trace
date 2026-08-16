@@ -19,7 +19,7 @@ import { BottomNavigation } from '../../components/ui/BottomNavigation';
 import { useAppStore } from '../../stores/useAppStore';
 import { triggerHaptic } from '../../utils/haptics';
 import { api } from '../../services/api';
-import { toClientScan } from '../../services/adapter';
+import { toClientScan, mapFinding } from '../../services/adapter';
 import type { ScanResult, ClientFinding, FindingSeverity } from '../../types/scan';
 
 type TabType =
@@ -46,15 +46,27 @@ export default function ReportScreen() {
 
   useEffect(() => {
     if (!params.id) return;
-    if (recentScans.find((s) => s.id === params.id)?.consoleObservations?.length) return;
+    const scanId = params.id;
+    if (recentScans.find((s) => s.id === scanId)?.consoleObservations?.length) return;
     api
-      .getResults(params.id)
-      .then((raw) => {
-        if (raw && (raw as { scan?: unknown }).scan) {
-          const mapped = toClientScan(raw as Record<string, unknown>);
-          setFetched(mapped);
-          addRecentScan(mapped);
+      .getResults(scanId)
+      .then(async (raw) => {
+        if (!raw) return;
+        const mapped = toClientScan(raw as Record<string, unknown>);
+        try {
+          const payload = (await api.getFindings(scanId)) as {
+            findings?: Array<Record<string, unknown>>;
+            summary?: ScanResult['findingsSummary'];
+          };
+          if (Array.isArray(payload.findings) && payload.findings.length) {
+            mapped.findings = payload.findings.map(mapFinding);
+            if (payload.summary) mapped.findingsSummary = payload.summary;
+          }
+        } catch {
+          /* results payload already includes findings */
         }
+        setFetched(mapped);
+        addRecentScan(mapped);
       })
       .catch(() => undefined);
   }, [params.id]);

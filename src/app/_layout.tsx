@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Colors } from '../constants/colors';
 import { useAppStore } from '../stores/useAppStore';
+import { api } from '../services/api';
+import { toClientScan } from '../services/adapter';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +22,39 @@ export default function RootLayout() {
   const segments = useSegments();
   const router = useRouter();
   const hasCompletedOnboarding = useAppStore((s) => s.hasCompletedOnboarding);
+  const setRecentScans = useAppStore((s) => s.setRecentScans);
   const [isReady, setIsReady] = useState(true);
+
+  useEffect(() => {
+    api
+      .listScans()
+      .then((rows) => {
+        setRecentScans(
+          rows
+            .filter((r) => r.summary)
+            .map((r) =>
+              toClientScan({
+                scan: {
+                  id: r.scanId,
+                  url: r.url,
+                  normalizedUrl: r.url,
+                  status: r.status,
+                  startedAt: r.createdAt,
+                },
+                summary: r.summary,
+                scores: r.scores,
+                consoleEvents: [],
+                runtimeErrors: [],
+                networkFailures: [],
+                accessibility: [],
+                pages: [],
+                performance: {},
+              }),
+            ),
+        );
+      })
+      .catch(() => undefined);
+  }, [setRecentScans]);
 
   // Check onboarding navigation
   useEffect(() => {
