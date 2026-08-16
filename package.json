@@ -27,7 +27,8 @@
     "docker:down": "docker compose down -v",
     "docker:smoke-down": "docker compose -f docker-compose.smoke.yml down -v",
     "docker:smoke": "tsx scripts/docker-smoke.ts",
-    "docker:verify": "npm run docker:smoke-stack && npm run docker:smoke"
+    "docker:verify": "npm run docker:smoke-stack && npm run docker:smoke",
+    "validate:render": "tsx scripts/validate-render.ts"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.13.0",
