@@ -14,6 +14,20 @@ if (!text.includes('type: web')) errors.push('Missing API web service');
 if (!text.includes('type: worker')) errors.push('Missing persistent worker service');
 if (!text.includes('type: keyvalue')) errors.push('Missing Redis service');
 if (!text.includes('fromDatabase')) errors.push('Missing DATABASE_URL wiring');
+if (!text.includes('fromService')) errors.push('Missing REDIS_URL wiring');
+
+const groupBlock = text.split('envVarGroups:')[1] ?? '';
+if (/fromDatabase:|fromService:/.test(groupBlock)) {
+  errors.push('envVarGroups cannot use fromDatabase/fromService (Render requires key+value)');
+}
+const servicesBlock = text.split('envVarGroups:')[0] ?? text;
+if (!/key:\s*DATABASE_URL[\s\S]*fromDatabase:[\s\S]*name:\s*trace-db/.test(servicesBlock)) {
+  errors.push('DATABASE_URL must be wired on services via fromDatabase: trace-db');
+}
+if (!/key:\s*REDIS_URL[\s\S]*fromService:[\s\S]*name:\s*trace-redis/.test(servicesBlock)) {
+  errors.push('REDIS_URL must be wired on services via fromService: trace-redis');
+}
+
 if (!text.includes('healthCheckPath: /health')) errors.push('Missing API health check');
 if (!text.includes('npx tsx server/src/api/index.ts')) errors.push('API dockerCommand must start Fastify');
 if (!text.includes('npx tsx server/src/worker/index.ts')) errors.push('Worker dockerCommand must start BullMQ worker');
@@ -37,5 +51,5 @@ if (errors.length) {
 console.log('render.yaml validation OK');
 console.log('  - API is a persistent Docker web service');
 console.log('  - worker is a separate persistent Docker background worker');
-console.log('  - PostgreSQL + Redis wired via env groups');
+console.log('  - PostgreSQL + Redis wired on API and worker services');
 console.log('  - no colocated/serverless scanner');
