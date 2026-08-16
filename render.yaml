@@ -45,11 +45,6 @@ services:
           type: keyvalue
           name: trace-redis
           property: connectionString
-      - key: API_PORT
-        fromService:
-          type: web
-          name: trace-api
-          envVarKey: PORT
       - key: API_BASE_URL
         fromService:
           type: web

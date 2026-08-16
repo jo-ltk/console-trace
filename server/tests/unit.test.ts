@@ -8,6 +8,7 @@ import { computeHealthScores, consoleNoiseScore, dedupeIssues, severityForIssue,
 import { classifyConsoleSource } from '../src/scanner/console-source.ts';
 import { analyzeCookies, analyzeCorsHeaders, analyzeSecurityHeaders } from '../src/analysis/security.ts';
 import { isCorsOriginAllowed, parseCorsOrigins } from '../src/security/cors.ts';
+import { shouldAutoStartApi } from '../src/api/entry.ts';
 import { isFirstPartyHost } from '../src/url/normalize.ts';
 import { isDangerousControl } from '../src/analysis/dom.ts';
 import type { ConsoleEvent, DeduplicatedIssue, PerformanceMetrics } from '../../src/server/types/scan-types.ts';
@@ -303,5 +304,19 @@ describe('CORS allowlist', () => {
   it('defaults wildcard outside production', () => {
     expect(parseCorsOrigins(undefined, 'development')).toEqual(['*']);
     expect(parseCorsOrigins(undefined, 'production')).toEqual([]);
+  });
+});
+
+describe('API process entry detection', () => {
+  it('starts when tsx is argv[1] and the API file is later', () => {
+    expect(
+      shouldAutoStartApi(['node', '/app/node_modules/tsx/dist/cli.mjs', 'server/src/api/index.ts']),
+    ).toBe(true);
+  });
+  it('starts for absolute Docker paths', () => {
+    expect(shouldAutoStartApi(['node', '/app/server/src/api/index.ts'])).toBe(true);
+  });
+  it('does not start when imported by vitest', () => {
+    expect(shouldAutoStartApi(['node', '/app/node_modules/vitest/vitest.mjs'])).toBe(false);
   });
 });

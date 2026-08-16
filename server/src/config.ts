@@ -60,7 +60,8 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://trace:trace@localhost:5432/trace',
   databaseSsl: databaseSsl(),
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
-  apiPort: num('API_PORT', num('PORT', 3001)),
+  // Render injects PORT at runtime; local compose may set API_PORT instead.
+  apiPort: num('PORT', num('API_PORT', 3001)),
   apiBaseUrl: process.env.API_BASE_URL ?? 'http://localhost:3001',
   corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, nodeEnv),
   allowLocalTargets: bool('ALLOW_LOCAL_TARGETS', false),

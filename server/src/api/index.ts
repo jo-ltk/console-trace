@@ -13,6 +13,9 @@ import { isCorsOriginAllowed } from '../security/cors.ts';
 import { assertSafeUrl, SsrfError } from '../security/ssrf.ts';
 import { onShutdown } from '../process/shutdown.ts';
 import type { ScanResult } from '../../../src/server/types/scan-types.ts';
+import { shouldAutoStartApi } from './entry.ts';
+
+export { shouldAutoStartApi };
 
 const ScanBody = z.object({
   url: z.string().min(1),
@@ -47,6 +50,13 @@ export async function buildApp(opts?: { disableRateLimit?: boolean }) {
     await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
   }
 
+  app.get('/', async (_req, reply) => {
+    return reply.code(200).send({
+      service: 'trace-api',
+      health: '/health',
+    });
+  });
+
   app.get('/health', async (_req, reply) => {
     let database = false;
     let redis = false;
@@ -67,9 +77,15 @@ export async function buildApp(opts?: { disableRateLimit?: boolean }) {
     const ok = database && redis;
     return reply.code(ok ? 200 : 503).send({
       ok,
+      status: ok ? (worker === 'ok' ? 'ok' : 'degraded') : 'unhealthy',
       database,
       redis,
       worker,
+      checks: {
+        database: database ? 'up' : 'down',
+        redis: redis ? 'up' : 'down',
+        worker,
+      },
       metrics: snapshotMetrics(),
     });
   });
@@ -266,7 +282,7 @@ export async function startApi(opts?: { manageShutdown?: boolean }) {
   await migrate();
   const app = await buildApp();
   await app.listen({ port: config.apiPort, host: '0.0.0.0' });
-  log.info('api_listening', { port: config.apiPort });
+  log.info('api_listening', { port: config.apiPort, portEnv: process.env.PORT, apiPortEnv: process.env.API_PORT });
   if (opts?.manageShutdown !== false) {
     onShutdown(async () => {
       await app.close();
@@ -277,8 +293,7 @@ export async function startApi(opts?: { manageShutdown?: boolean }) {
   return app;
 }
 
-const launchedAsApi =
-  typeof process.argv[1] === 'string' && /(?:^|[\\/])api[\\/]index\.[cm]?ts$/.test(process.argv[1]);
+const launchedAsApi = shouldAutoStartApi();
 
 if (launchedAsApi) {
   startApi().catch((err) => {
