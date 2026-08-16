@@ -1,0 +1,116 @@
+# Production topology: Postgres + Redis stay on the private Docker network.
+# API is published; the Playwright worker is a separate Chromium process.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Override POSTGRES_PASSWORD via environment. Do not commit secrets.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trace}
+      POSTGRES_DB: ${POSTGRES_DB:-trace}
+    volumes:
+      - trace_prod_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trace} -d ${POSTGRES_DB:-trace}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - trace_prod_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["npx", "tsx", "server/src/api/index.ts"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-trace}:${POSTGRES_PASSWORD:-trace}@postgres:5432/${POSTGRES_DB:-trace}
+      REDIS_URL: redis://redis:6379
+      API_PORT: "3001"
+      PORT: "3001"
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:3001}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ALLOW_LOCAL_TARGETS: "false"
+      ARTIFACT_DIR: /app/artifacts
+      SCAN_MAX_PAGES: ${SCAN_MAX_PAGES:-20}
+      SCAN_HARD_MAX_PAGES: ${SCAN_HARD_MAX_PAGES:-100}
+      SCAN_MAX_DEPTH: ${SCAN_MAX_DEPTH:-3}
+      SCAN_MAX_DURATION: ${SCAN_MAX_DURATION:-180000}
+      SCAN_PAGE_TIMEOUT: ${SCAN_PAGE_TIMEOUT:-30000}
+      SCAN_MAX_REQUESTS: ${SCAN_MAX_REQUESTS:-500}
+      SCAN_BROWSER_CONCURRENCY: "1"
+      SCAN_MAX_SCREENSHOT_BYTES: "8000000"
+      SCAN_MAX_RESPONSE_BODY_BYTES: "1048576"
+      SCAN_PROBE_MAX_REQUESTS: "50"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${HOST_API_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - trace_prod_artifacts:/app/artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["npx", "tsx", "server/src/worker/index.ts"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-trace}:${POSTGRES_PASSWORD:-trace}@postgres:5432/${POSTGRES_DB:-trace}
+      REDIS_URL: redis://redis:6379
+      ALLOW_LOCAL_TARGETS: "false"
+      SCAN_BROWSER_CONCURRENCY: "1"
+      ARTIFACT_DIR: /app/artifacts
+      SCAN_MAX_PAGES: ${SCAN_MAX_PAGES:-20}
+      SCAN_HARD_MAX_PAGES: ${SCAN_HARD_MAX_PAGES:-100}
+      SCAN_MAX_DEPTH: ${SCAN_MAX_DEPTH:-3}
+      SCAN_MAX_DURATION: ${SCAN_MAX_DURATION:-180000}
+      SCAN_PAGE_TIMEOUT: ${SCAN_PAGE_TIMEOUT:-30000}
+      SCAN_MAX_REQUESTS: ${SCAN_MAX_REQUESTS:-500}
+      SCAN_MAX_SCREENSHOT_BYTES: "8000000"
+      SCAN_MAX_RESPONSE_BODY_BYTES: "1048576"
+      SCAN_PROBE_MAX_REQUESTS: "50"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - trace_prod_artifacts:/app/artifacts
+    shm_size: "1gb"
+
+volumes:
+  trace_prod_pg:
+  trace_prod_redis:
+  trace_prod_artifacts:

@@ -34,6 +34,8 @@ export interface ScanRequest {
   options?: ScanOptions;
 }
 
+export type ConsoleSource = 'TARGET' | 'SCANNER' | 'BROWSER';
+
 export interface ConsoleEvent {
   id: string;
   type: 'log' | 'info' | 'warn' | 'error' | 'debug' | 'trace' | 'dir' | 'table' | 'assert' | 'clear';
@@ -45,6 +47,8 @@ export interface ConsoleEvent {
   column?: number;
   args?: string[];
   classification: 'RUNTIME_OBSERVED' | 'STATIC_SOURCE_DETECTED';
+  /** Who produced the message. SCANNER/BROWSER must not be scored as site console noise. */
+  source: ConsoleSource;
 }
 
 export interface RuntimeErrorEvent {
@@ -193,6 +197,7 @@ export interface AccessibilityFinding {
   rule: string;
   impact: 'critical' | 'serious' | 'moderate' | 'minor';
   description: string;
+  help?: string;
   helpUrl: string;
   elementHtml: string;
   selector: string;
@@ -330,6 +335,71 @@ export interface ScannedPageResult {
   issuesCount: number;
   duration: number;
   depth: number;
+  /** Page that linked here during the crawl, when known. */
+  linkedFrom?: string;
+}
+
+export type FindingCategory =
+  | 'console'
+  | 'runtime'
+  | 'network'
+  | 'assets'
+  | 'performance'
+  | 'accessibility'
+  | 'security'
+  | 'seo';
+
+export type FindingConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface FindingLocation {
+  pageUrl?: string;
+  url?: string;
+  selector?: string;
+  source?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface FindingEvidence {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface Finding {
+  id: string;
+  scanId: string;
+  pageId?: string;
+  category: FindingCategory;
+  kind: string;
+  severity: IssueSeverity;
+  title: string;
+  summary: string;
+  description: string;
+  evidence: FindingEvidence;
+  evidenceText: string;
+  location: FindingLocation;
+  pages: string[];
+  occurrences: number;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  source: string;
+  confidence: FindingConfidence;
+  recommendation: string;
+  whyItMatters: string;
+  dedupeKey: string;
+}
+
+export interface SeverityCounts {
+  critical: number;
+  error: number;
+  warning: number;
+  info: number;
+}
+
+export interface FindingsSummary {
+  total: number;
+  severity: SeverityCounts;
+  byCategory: Record<FindingCategory, SeverityCounts>;
 }
 
 export interface ScanResult {
@@ -349,13 +419,23 @@ export interface ScanResult {
     pagesScanned: number;
     requestsObserved: number;
     consoleEvents: number;
+    consoleTargetEvents: number;
+    consoleScannerEvents: number;
+    consoleBrowserEvents: number;
     runtimeErrors: number;
     networkFailures: number;
     accessibilityViolations: number;
     securityFindings: number;
     brokenAssets: number;
+    findings: number;
+    findingsCritical: number;
+    findingsError: number;
+    findingsWarning: number;
+    findingsInfo: number;
   };
   scores: HealthScoreBreakdown;
+  findings: Finding[];
+  findingsSummary: FindingsSummary;
   issues: DeduplicatedIssue[];
   pages: ScannedPageResult[];
   consoleEvents: ConsoleEvent[];

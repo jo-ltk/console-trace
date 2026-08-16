@@ -3,13 +3,15 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { config } from '../config.ts';
+import { assertProductionEnv, config } from '../config.ts';
 import { log } from '../log.ts';
 import { snapshotMetrics } from '../metrics.ts';
 import { migrate, pool } from '../db/pool.ts';
 import { getScan, insertScan, listScans, updateScanStatus } from '../db/scans.ts';
 import { enqueueScan, requestCancel, getRedis } from '../queue/queues.ts';
+import { isCorsOriginAllowed } from '../security/cors.ts';
 import { assertSafeUrl, SsrfError } from '../security/ssrf.ts';
+import { onShutdown } from '../process/shutdown.ts';
 import type { ScanResult } from '../../../src/server/types/scan-types.ts';
 
 const ScanBody = z.object({
@@ -36,12 +38,41 @@ function resultOf(row: { result: ScanResult | string | null; id: string; status:
 
 export async function buildApp(opts?: { disableRateLimit?: boolean }) {
   const app = Fastify({ logger: false });
-  await app.register(cors, { origin: true });
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      cb(null, isCorsOriginAllowed(origin, config.corsOrigins));
+    },
+  });
   if (!opts?.disableRateLimit) {
     await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
   }
 
-  app.get('/health', async () => ({ ok: true, metrics: snapshotMetrics() }));
+  app.get('/health', async (_req, reply) => {
+    let database = false;
+    let redis = false;
+    let worker: 'ok' | 'missing' = 'missing';
+    try {
+      await pool.query('SELECT 1');
+      database = true;
+    } catch (err) {
+      log.warn('health_db_failed', { error: (err as Error).message });
+    }
+    try {
+      redis = (await getRedis().ping()) === 'PONG';
+      const beat = await getRedis().get('trace:worker:heartbeat');
+      worker = beat ? 'ok' : 'missing';
+    } catch (err) {
+      log.warn('health_redis_failed', { error: (err as Error).message });
+    }
+    const ok = database && redis;
+    return reply.code(ok ? 200 : 503).send({
+      ok,
+      database,
+      redis,
+      worker,
+      metrics: snapshotMetrics(),
+    });
+  });
 
   app.post(
     '/api/scans',
@@ -143,6 +174,35 @@ export async function buildApp(opts?: { disableRateLimit?: boolean }) {
   app.get('/api/scans/:id/security', (req, reply) => slice(req, reply, 'securityFindings'));
   app.get('/api/scans/:id/accessibility', (req, reply) => slice(req, reply, 'accessibility'));
 
+  app.get('/api/scans/:id/findings', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const query = req.query as { severity?: string; category?: string; page?: string };
+    const row = await getScan(id);
+    if (!row) return reply.code(404).send({ error: 'Scan not found' });
+    const result = resultOf(row);
+    if (!result) return { status: row.status, data: null, note: 'NOT OBSERVED yet' };
+    let findings = result.findings ?? [];
+    if (query.severity) {
+      const sev = query.severity.toUpperCase();
+      findings = findings.filter((f) => f.severity === sev);
+    }
+    if (query.category) {
+      const cat = query.category.toLowerCase();
+      findings = findings.filter((f) => f.category === cat);
+    }
+    if (query.page) {
+      findings = findings.filter(
+        (f) => f.location.pageUrl?.includes(query.page!) || f.pages.some((p) => p.includes(query.page!)),
+      );
+    }
+    return {
+      scanId: id,
+      total: findings.length,
+      summary: result.findingsSummary,
+      findings,
+    };
+  });
+
   app.get(
     '/api/scans/:id/export',
     { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
@@ -201,11 +261,19 @@ export async function buildApp(opts?: { disableRateLimit?: boolean }) {
   return app;
 }
 
-export async function startApi() {
+export async function startApi(opts?: { manageShutdown?: boolean }) {
+  assertProductionEnv();
   await migrate();
   const app = await buildApp();
   await app.listen({ port: config.apiPort, host: '0.0.0.0' });
   log.info('api_listening', { port: config.apiPort });
+  if (opts?.manageShutdown !== false) {
+    onShutdown(async () => {
+      await app.close();
+      await pool.end();
+      await getRedis().quit().catch(() => undefined);
+    });
+  }
   return app;
 }
 

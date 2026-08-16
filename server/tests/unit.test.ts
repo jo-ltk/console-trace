@@ -5,7 +5,9 @@ import { looksLikeSecret, looksLikeTokenKey, redactHeaders, redactUrl } from '..
 import { normalizePageUrl, sameOrigin } from '../src/url/normalize.ts';
 import { robotsBlocked, parseRobots, isBenignRequestFailure } from '../src/analysis/network.ts';
 import { computeHealthScores, consoleNoiseScore, dedupeIssues, severityForIssue, accessibilityScore } from '../src/scoring/health.ts';
+import { classifyConsoleSource } from '../src/scanner/console-source.ts';
 import { analyzeCookies, analyzeCorsHeaders, analyzeSecurityHeaders } from '../src/analysis/security.ts';
+import { isCorsOriginAllowed, parseCorsOrigins } from '../src/security/cors.ts';
 import { isFirstPartyHost } from '../src/url/normalize.ts';
 import { isDangerousControl } from '../src/analysis/dom.ts';
 import type { ConsoleEvent, DeduplicatedIssue, PerformanceMetrics } from '../../src/server/types/scan-types.ts';
@@ -95,14 +97,14 @@ describe('robots', () => {
 
 describe('severity and scoring', () => {
   it('maps severities', () => {
-    expect(severityForIssue('runtime_exception')).toBe('ERROR');
+    expect(severityForIssue('runtime_exception')).toBe('CRITICAL');
     expect(severityForIssue('broken_asset', 404)).toBe('WARNING');
     expect(severityForIssue('console_log')).toBe('INFO');
   });
   it('console noise is deterministic', () => {
     const events: ConsoleEvent[] = [
-      { id: '1', type: 'error', text: 'a', pageUrl: '/', timestamp: '', classification: 'RUNTIME_OBSERVED' },
-      { id: '2', type: 'warn', text: 'b', pageUrl: '/', timestamp: '', classification: 'RUNTIME_OBSERVED' },
+      { id: '1', type: 'error', text: 'a', pageUrl: '/', timestamp: '', classification: 'RUNTIME_OBSERVED', source: 'TARGET' },
+      { id: '2', type: 'warn', text: 'b', pageUrl: '/', timestamp: '', classification: 'RUNTIME_OBSERVED', source: 'TARGET' },
     ];
     const a = consoleNoiseScore(events);
     const b = consoleNoiseScore(events);
@@ -219,7 +221,87 @@ describe('production-ready observation filters', () => {
       pageUrl: '/',
       timestamp: '',
       classification: 'RUNTIME_OBSERVED' as const,
+      source: 'TARGET' as const,
     }));
     expect(consoleNoiseScore(events).score).toBeGreaterThanOrEqual(65);
+  });
+  it('ignores scanner and browser console noise when scoring the site', () => {
+    const events: ConsoleEvent[] = [
+      {
+        id: '1',
+        type: 'log',
+        text: 'Deprecated API for given entry type.',
+        pageUrl: 'https://example.com/',
+        timestamp: '',
+        classification: 'RUNTIME_OBSERVED',
+        source: 'SCANNER',
+      },
+      {
+        id: '2',
+        type: 'error',
+        text: 'chrome internals',
+        pageUrl: 'https://example.com/',
+        timestamp: '',
+        classification: 'RUNTIME_OBSERVED',
+        source: 'BROWSER',
+      },
+    ];
+    expect(consoleNoiseScore(events).score).toBe(100);
+  });
+});
+
+describe('console source attribution', () => {
+  it('attributes page scripts to TARGET', () => {
+    expect(
+      classifyConsoleSource({
+        text: 'fixture-error-message',
+        sourceUrl: 'http://127.0.0.1:4173/console',
+        pageUrl: 'http://127.0.0.1:4173/console',
+      }),
+    ).toBe('TARGET');
+  });
+  it('attributes TRACE performance collection noise to SCANNER', () => {
+    expect(
+      classifyConsoleSource({
+        text: 'Deprecated API for given entry type.',
+        sourceUrl: 'https://example.com/',
+        pageUrl: 'https://example.com/',
+      }),
+    ).toBe('SCANNER');
+  });
+  it('attributes Chrome resource-load console lines to BROWSER', () => {
+    expect(
+      classifyConsoleSource({
+        text: 'Failed to load resource: the server responded with a status of 404 (Not Found)',
+        sourceUrl: 'http://127.0.0.1:4173/broken-assets',
+        pageUrl: 'http://127.0.0.1:4173/broken-assets',
+      }),
+    ).toBe('BROWSER');
+  });
+  it('attributes Chrome extension messages to BROWSER', () => {
+    expect(
+      classifyConsoleSource({
+        text: 'extension debug',
+        sourceUrl: 'chrome-extension://abcd/content.js',
+        pageUrl: 'https://example.com/',
+      }),
+    ).toBe('BROWSER');
+  });
+});
+
+describe('CORS allowlist', () => {
+  it('allows missing Origin (native Expo)', () => {
+    expect(isCorsOriginAllowed(undefined, [])).toBe(true);
+  });
+  it('denies unknown browser origins in production allowlist', () => {
+    expect(isCorsOriginAllowed('https://evil.example', [])).toBe(false);
+    expect(isCorsOriginAllowed('https://app.example', ['https://app.example'])).toBe(true);
+  });
+  it('allows wildcard', () => {
+    expect(isCorsOriginAllowed('https://anywhere.example', ['*'])).toBe(true);
+  });
+  it('defaults wildcard outside production', () => {
+    expect(parseCorsOrigins(undefined, 'development')).toEqual(['*']);
+    expect(parseCorsOrigins(undefined, 'production')).toEqual([]);
   });
 });

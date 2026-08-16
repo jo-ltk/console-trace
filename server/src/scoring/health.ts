@@ -2,20 +2,46 @@ import type {
   AccessibilityFinding,
   ConsoleEvent,
   DeduplicatedIssue,
+  Finding,
   HealthScoreBreakdown,
-  IssueSeverity,
   NetworkFailure,
   PerformanceMetrics,
   RuntimeErrorEvent,
   SecurityFinding,
   SeoFinding,
 } from '../../../src/server/types/scan-types.ts';
+import { isTargetConsoleEvent } from '../scanner/console-source.ts';
+import { buildFindings } from '../findings/pipeline.ts';
+import { CONSOLE_EXCESS_LOG_AFTER } from '../findings/thresholds.ts';
+import { severityForIssue as severityForKindCompat } from '../findings/severity.ts';
 
-/** Configurable console-noise weights. */
+/**
+ * Finding-based penalties (per unique finding after dedupe):
+ *   CRITICAL = 18
+ *   ERROR    = 10
+ *   WARNING  = 4
+ *   INFO     = 0
+ * Extra occurrences of the same finding add 0.5 each, capped at 8.
+ *
+ * Accessibility scoring uses unique rule+impact (not every element).
+ * Performance scoring uses metric thresholds, not finding counts.
+ * Unavailable metrics are skipped (not scored as 0).
+ */
+export const FINDING_PENALTIES = {
+  CRITICAL: 18,
+  ERROR: 10,
+  WARNING: 4,
+  INFO: 0,
+} as const;
+
+export const OCCURRENCE_PENALTY = 0.5;
+export const OCCURRENCE_PENALTY_CAP = 8;
+
+/** Configurable console-noise weights (legacy helper; console category uses findings). */
 export const CONSOLE_WEIGHTS = {
   error: 8,
   warn: 3,
-  excessLogAfter: 20,
+  excessLogAfter: CONSOLE_EXCESS_LOG_AFTER,
   excessLog: 0.5,
   duplicateGroup: 1,
 };
@@ -23,14 +49,15 @@ export const CONSOLE_WEIGHTS = {
 /**
  * consoleScore = 100 - errors*errorWeight - warnings*warnWeight
  *   - max(0, logs - excessLogAfter)*excessLog - duplicateGroups*duplicateGroup
- * Clamped to [0, 100].
+ * Clamped to [0, 100]. SCANNER/BROWSER events are excluded.
  */
 export function consoleNoiseScore(events: ConsoleEvent[]): { score: number; explanation: string[] } {
-  const errors = events.filter((e) => e.type === 'error').length;
-  const warns = events.filter((e) => e.type === 'warn').length;
-  const logs = events.filter((e) => e.type === 'log' || e.type === 'info' || e.type === 'debug').length;
+  const target = events.filter((e) => isTargetConsoleEvent(e.source));
+  const errors = target.filter((e) => e.type === 'error').length;
+  const warns = target.filter((e) => e.type === 'warn').length;
+  const logs = target.filter((e) => e.type === 'log' || e.type === 'info' || e.type === 'debug').length;
   const groups = new Map<string, number>();
-  for (const e of events) {
+  for (const e of target) {
     const k = `${e.type}:${e.text}`;
     groups.set(k, (groups.get(k) ?? 0) + 1);
   }
@@ -73,6 +100,29 @@ function clamp(n: number): number {
 
 function metricNumber(v: number | 'NOT AVAILABLE'): number | null {
   return typeof v === 'number' ? v : null;
+}
+
+export function penaltyForFinding(f: Finding): number {
+  const base = FINDING_PENALTIES[f.severity];
+  if (f.severity === 'INFO') return 0;
+  const extra = Math.min(OCCURRENCE_PENALTY_CAP, Math.max(0, f.occurrences - 1) * OCCURRENCE_PENALTY);
+  return base + extra;
+}
+
+export function scoreFindings(findings: Finding[]): { score: number; explanation: string[] } {
+  const total = findings.reduce((sum, f) => sum + penaltyForFinding(f), 0);
+  const bySev = { CRITICAL: 0, ERROR: 0, WARNING: 0, INFO: 0 };
+  for (const f of findings) bySev[f.severity] += 1;
+  return {
+    score: clamp(Math.round(100 - total)),
+    explanation: [
+      `findings=${findings.length}`,
+      `CRITICAL=${bySev.CRITICAL}*${FINDING_PENALTIES.CRITICAL}`,
+      `ERROR=${bySev.ERROR}*${FINDING_PENALTIES.ERROR}`,
+      `WARNING=${bySev.WARNING}*${FINDING_PENALTIES.WARNING}`,
+      `INFO=${bySev.INFO}*${FINDING_PENALTIES.INFO} (no penalty)`,
+    ],
+  };
 }
 
 export function performanceScore(m: PerformanceMetrics): { score: number; explanation: string[] } {
@@ -168,6 +218,16 @@ export function assetsScore(brokenCount: number): { score: number; explanation: 
   return { score, explanation: [`brokenAssets=${brokenCount}`] };
 }
 
+function uniqueA11yFindings(findings: Finding[]): Finding[] {
+  const map = new Map<string, Finding>();
+  for (const f of findings) {
+    const rule = String(f.evidence.rule ?? f.kind);
+    const k = `${rule}|${f.severity}`;
+    if (!map.has(k)) map.set(k, f);
+  }
+  return [...map.values()];
+}
+
 export function computeHealthScores(input: {
   consoleEvents: ConsoleEvent[];
   runtimeErrors: RuntimeErrorEvent[];
@@ -178,16 +238,33 @@ export function computeHealthScores(input: {
   seoFindings: SeoFinding[];
   brokenAssets: number;
   unavailable?: Partial<Record<keyof typeof CATEGORY_WEIGHTS, string>>;
+  findings?: Finding[];
 }): HealthScoreBreakdown {
-  const explanations: Record<string, string[]> = {};
-  const console = consoleNoiseScore(input.consoleEvents);
-  const runtime = runtimeScore(input.runtimeErrors);
-  const network = networkScore(input.networkFailures);
+  const findings =
+    input.findings ??
+    buildFindings({
+      scanId: 'score',
+      pages: [],
+      consoleEvents: input.consoleEvents,
+      runtimeErrors: input.runtimeErrors,
+      networkFailures: input.networkFailures,
+      brokenResources: [],
+      brokenLinks: [],
+      accessibility: input.accessibility,
+      securityFindings: input.securityFindings,
+      seoFindings: input.seoFindings,
+      performance: input.performance,
+    });
+
+  const byCat = (c: Finding['category']) => findings.filter((f) => f.category === c);
+  const runtime = scoreFindings(byCat('runtime'));
+  const network = scoreFindings(byCat('network'));
+  const console = scoreFindings(byCat('console'));
   const performance = performanceScore(input.performance);
-  const accessibility = accessibilityScore(input.accessibility);
-  const security = securityScore(input.securityFindings);
-  const seo = seoScore(input.seoFindings);
-  const assets = assetsScore(input.brokenAssets);
+  const accessibility = scoreFindings(uniqueA11yFindings(byCat('accessibility')));
+  const security = scoreFindings(byCat('security'));
+  const seo = scoreFindings(byCat('seo'));
+  const assets = scoreFindings(byCat('assets'));
 
   const scores: Record<string, number> = {
     runtime: runtime.score,
@@ -199,18 +276,20 @@ export function computeHealthScores(input: {
     seo: seo.score,
     assets: assets.score,
   };
-  explanations.runtime = runtime.explanation;
-  explanations.network = network.explanation;
-  explanations.console = console.explanation;
-  explanations.performance = input.unavailable?.performance
-    ? [`UNAVAILABLE: ${input.unavailable.performance}`]
-    : performance.explanation;
-  explanations.accessibility = input.unavailable?.accessibility
-    ? [`UNAVAILABLE: ${input.unavailable.accessibility}`]
-    : accessibility.explanation;
-  explanations.security = security.explanation;
-  explanations.seo = seo.explanation;
-  explanations.assets = assets.explanation;
+  const explanations: Record<string, string[]> = {
+    runtime: runtime.explanation,
+    network: network.explanation,
+    console: console.explanation,
+    performance: input.unavailable?.performance
+      ? [`UNAVAILABLE: ${input.unavailable.performance}`]
+      : performance.explanation,
+    accessibility: input.unavailable?.accessibility
+      ? [`UNAVAILABLE: ${input.unavailable.accessibility}`]
+      : accessibility.explanation,
+    security: security.explanation,
+    seo: seo.explanation,
+    assets: assets.explanation,
+  };
 
   let weightSum = 0;
   let valueSum = 0;
@@ -223,6 +302,7 @@ export function computeHealthScores(input: {
   const overall = weightSum > 0 ? clamp(Math.round(valueSum / weightSum)) : 0;
   explanations.overall = [
     `weighted average of available categories using weights ${JSON.stringify(CATEGORY_WEIGHTS)}`,
+    `formula: 100 - sum(finding penalties); CRITICAL=${FINDING_PENALTIES.CRITICAL} ERROR=${FINDING_PENALTIES.ERROR} WARNING=${FINDING_PENALTIES.WARNING} INFO=${FINDING_PENALTIES.INFO}`,
   ];
 
   return {
@@ -240,21 +320,8 @@ export function computeHealthScores(input: {
   };
 }
 
-export function severityForIssue(type: string, status?: number): IssueSeverity {
-  if (type === 'runtime_exception' || type === 'unhandled_rejection') return 'ERROR';
-  if (type === 'network_5xx') return 'ERROR';
-  if (type === 'network_4xx' && status === 404) return 'WARNING';
-  if (type === 'broken_asset') return 'WARNING';
-  if (type === 'console_error') return 'ERROR';
-  if (type === 'console_warn') return 'WARNING';
-  if (type === 'console_log') return 'INFO';
-  if (type === 'accessibility_critical') return 'ERROR';
-  if (type === 'accessibility') return 'WARNING';
-  if (type === 'security_fail') return 'ERROR';
-  if (type === 'security_warning') return 'WARNING';
-  if (status && status >= 500) return 'ERROR';
-  if (status && status >= 400) return 'WARNING';
-  return 'INFO';
+export function severityForIssue(type: string, status?: number) {
+  return severityForKindCompat(type, status);
 }
 
 export function dedupeIssues(issues: DeduplicatedIssue[]): DeduplicatedIssue[] {

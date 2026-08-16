@@ -1,0 +1,17 @@
+export function parseCorsOrigins(raw: string | undefined, nodeEnv: string): string[] {
+  if (raw !== undefined && raw !== '') {
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (nodeEnv === 'production') return [];
+  return ['*'];
+}
+
+/** Native clients (Expo) omit Origin. Browser origins must be allowlisted in production. */
+export function isCorsOriginAllowed(origin: string | undefined, allowed: string[]): boolean {
+  if (!origin) return true;
+  if (allowed.includes('*')) return true;
+  return allowed.includes(origin);
+}

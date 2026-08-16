@@ -8,6 +8,7 @@ import { log } from '../log.ts';
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
   max: 10,
+  ssl: config.databaseSsl,
 });
 
 export async function migrate(): Promise<void> {

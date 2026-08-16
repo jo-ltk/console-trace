@@ -28,7 +28,7 @@ const DEFAULT_CONFIG: ScanConfiguration = {
     accessibility: true,
   },
   advanced: {
-    maxPages: 5,
+    maxPages: 10,
     interactionDepth: 'standard',
     device: 'mobile',
   },

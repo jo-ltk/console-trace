@@ -32,9 +32,11 @@ services:
     network_mode: host
     command: ["npx", "tsx", "server/src/api/index.ts"]
     environment:
+      NODE_ENV: production
       DATABASE_URL: postgres://trace:trace@127.0.0.1:5432/trace
       REDIS_URL: redis://127.0.0.1:6379
       API_PORT: 3001
+      CORS_ORIGINS: "*"
       ALLOW_LOCAL_TARGETS: "false"
       ARTIFACT_DIR: /app/artifacts
     depends_on:
@@ -52,6 +54,7 @@ services:
     network_mode: host
     command: ["npx", "tsx", "server/src/worker/index.ts"]
     environment:
+      NODE_ENV: production
       DATABASE_URL: postgres://trace:trace@127.0.0.1:5432/trace
       REDIS_URL: redis://127.0.0.1:6379
       ALLOW_LOCAL_TARGETS: "false"

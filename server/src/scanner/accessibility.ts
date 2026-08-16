@@ -16,6 +16,7 @@ export async function runAccessibilityScan(
         rule: v.id,
         impact: (v.impact as AccessibilityFinding['impact']) || 'moderate',
         description: v.description,
+        help: v.help,
         helpUrl: v.helpUrl,
         elementHtml: node.html.slice(0, 500),
         selector: node.target.join(' '),

@@ -7,7 +7,6 @@ import { runAccessibilityScan } from './accessibility.ts';
 import type {
   AccessibilityFinding,
   ConsoleEvent,
-  DeduplicatedIssue,
   FormFinding,
   NetworkEvent,
   NetworkFailure,
@@ -57,7 +56,11 @@ import {
   parseRobots,
   robotsBlocked,
 } from '../analysis/network.ts';
-import { computeHealthScores, dedupeIssues, severityForIssue } from '../scoring/health.ts';
+import { computeHealthScores } from '../scoring/health.ts';
+import { classifyConsoleSource, isTargetConsoleEvent, mapPlaywrightConsoleType } from './console-source.ts';
+import { buildFindings } from '../findings/pipeline.ts';
+import { summarizeFindings } from '../findings/report.ts';
+import { issuesFromFindings } from '../findings/issues.ts';
 
 export type ProgressFn = (status: ScanStatus, extra?: Record<string, unknown>) => Promise<void> | void;
 
@@ -111,7 +114,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
   let performance: PerformanceMetrics = emptyPerf();
   const screenshots: ScanResult['screenshots'] = { errorPages: {} };
   const visited = new Set<string>();
-  const queued: { url: string; depth: number }[] = [{ url: input.url, depth: 0 }];
+  const queued: { url: string; depth: number; fromUrl?: string }[] = [{ url: input.url, depth: 0 }];
   const discovered = new Set<string>([input.url]);
   const requestStarts = new Map<Request, number>();
   let currentPageUrl = input.url;
@@ -340,9 +343,9 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
             if (!n) continue;
             if (!sameOrigin(input.url, n)) continue;
             if (discovered.has(n) || visited.has(n)) continue;
-            if (discovered.size + visited.size >= opts.maxPages) break;
+            if (discovered.size >= opts.maxPages) break;
             discovered.add(n);
-            queued.push({ url: n, depth: item.depth + 1 });
+            queued.push({ url: n, depth: item.depth + 1, fromUrl: url });
           }
         }
       } catch (err) {
@@ -370,18 +373,16 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
       }
 
       const duration = Date.now() - pageStarted;
-      const issuesOnPage =
-        runtimeErrors.filter((e) => e.pageUrl === url).length +
-        networkFailures.filter((e) => e.pageUrl === url).length;
       pages.push({
         id: id(),
         url,
         title,
-        status: issuesOnPage > 0 ? (statusCode >= 400 ? 'error' : 'warning') : 'healthy',
+        status: statusCode >= 400 ? 'error' : 'healthy',
         statusCode,
-        issuesCount: issuesOnPage,
+        issuesCount: 0,
         duration,
         depth: item.depth,
+        linkedFrom: item.fromUrl,
       });
     }
 
@@ -480,16 +481,34 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
 
     const brokenLinks = await collectBrokenLinks(pages, networkEvents, input.url, opts.activeProbing === true);
 
-    const issues = buildIssues({
+    const findings = buildFindings({
+      scanId: input.scanId,
+      pages,
       consoleEvents,
       runtimeErrors,
       networkFailures,
+      brokenResources,
+      brokenLinks,
       accessibility,
       securityFindings,
       seoFindings,
-      brokenResources,
+      performance,
     });
+    const findingsSummary = summarizeFindings(findings);
+    const issues = issuesFromFindings(findings);
 
+    for (const p of pages) {
+      const pageFindings = findings.filter((f) => f.pages.includes(p.url) || f.location.pageUrl === p.url);
+      p.issuesCount = pageFindings.length;
+      const hasError = pageFindings.some((f) => f.severity === 'CRITICAL' || f.severity === 'ERROR');
+      const hasWarn = pageFindings.some((f) => f.severity === 'WARNING');
+      if (p.statusCode >= 400) p.status = 'error';
+      else if (hasError) p.status = 'error';
+      else if (hasWarn) p.status = 'warning';
+      else p.status = 'healthy';
+    }
+
+    const targetConsole = consoleEvents.filter((e) => isTargetConsoleEvent(e.source));
     const scores = computeHealthScores({
       consoleEvents,
       runtimeErrors,
@@ -500,6 +519,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
       seoFindings,
       brokenAssets: brokenResources.length,
       unavailable,
+      findings,
     });
 
     await input.onProgress?.('generating_report');
@@ -527,14 +547,24 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
         pagesDiscovered: discovered.size,
         pagesScanned: pages.length,
         requestsObserved: networkEvents.length,
-        consoleEvents: consoleEvents.length,
+        consoleEvents: targetConsole.length,
+        consoleTargetEvents: targetConsole.length,
+        consoleScannerEvents: consoleEvents.filter((e) => e.source === 'SCANNER').length,
+        consoleBrowserEvents: consoleEvents.filter((e) => e.source === 'BROWSER').length,
         runtimeErrors: runtimeErrors.length,
         networkFailures: networkFailures.length,
         accessibilityViolations: accessibility.length,
         securityFindings: securityFindings.filter((s) => s.status === 'FAIL' || s.status === 'WARNING').length,
         brokenAssets: brokenResources.length,
+        findings: findings.length,
+        findingsCritical: findingsSummary.severity.critical,
+        findingsError: findingsSummary.severity.error,
+        findingsWarning: findingsSummary.severity.warning,
+        findingsInfo: findingsSummary.severity.info,
       },
       scores,
+      findings,
+      findingsSummary,
       issues,
       pages,
       consoleEvents,
@@ -569,7 +599,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
   function attachObservers(page: Page) {
     page.on('console', (msg) => {
       const loc = msg.location();
-      const type = mapConsoleType(msg.type());
+      const type = mapPlaywrightConsoleType(msg.type());
       const text = redactText(msg.text());
       if (text.startsWith('[TRACE_UNHANDLED_REJECTION]')) {
         const rest = text.replace('[TRACE_UNHANDLED_REJECTION]', '').trim();
@@ -581,6 +611,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
           timestamp: nowIso(),
           type: 'unhandled_rejection',
         });
+        return;
       }
       const args: string[] = [];
       try {
@@ -590,17 +621,19 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
       } catch {
         /* not serializable */
       }
+      const sourceUrl = loc.url || undefined;
       consoleEvents.push({
         id: id(),
         type,
         text,
         pageUrl: currentPageUrl,
         timestamp: nowIso(),
-        sourceUrl: loc.url || undefined,
+        sourceUrl,
         line: loc.lineNumber || undefined,
         column: loc.columnNumber || undefined,
         args: args.length ? args.map(redactText) : undefined,
         classification: 'RUNTIME_OBSERVED',
+        source: classifyConsoleSource({ text, sourceUrl, pageUrl: currentPageUrl }),
       });
     });
 
@@ -729,11 +762,6 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
       }
     });
   }
-}
-
-function mapConsoleType(t: string): ConsoleEvent['type'] {
-  const allowed: ConsoleEvent['type'][] = ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'table', 'assert', 'clear'];
-  return (allowed as string[]).includes(t) ? (t as ConsoleEvent['type']) : 'log';
 }
 
 function headerMap(nav: { headers: () => Record<string, string> } | null): Record<string, string> {
@@ -923,109 +951,3 @@ async function collectBrokenLinks(
   return broken;
 }
 
-function buildIssues(input: {
-  consoleEvents: ConsoleEvent[];
-  runtimeErrors: RuntimeErrorEvent[];
-  networkFailures: NetworkFailure[];
-  accessibility: AccessibilityFinding[];
-  securityFindings: SecurityFinding[];
-  seoFindings: SeoFinding[];
-  brokenResources: ScanResult['brokenResources'];
-}): DeduplicatedIssue[] {
-  const issues: DeduplicatedIssue[] = [];
-  for (const e of input.runtimeErrors) {
-    issues.push({
-      id: e.id,
-      type: e.type === 'unhandled_rejection' ? 'unhandled_rejection' : 'runtime_exception',
-      category: 'RUNTIME',
-      severity: severityForIssue('runtime_exception'),
-      title: e.message,
-      description: e.stack ?? e.message,
-      occurrences: 1,
-      pages: [e.pageUrl],
-      evidence: { page: e.pageUrl, timestamp: e.timestamp, source: e.sourceUrl, line: e.line, column: e.column },
-    });
-  }
-  for (const e of input.consoleEvents.filter((c) => c.type === 'error' || c.type === 'warn')) {
-    issues.push({
-      id: e.id,
-      type: e.type === 'error' ? 'console_error' : 'console_warn',
-      category: 'CONSOLE',
-      severity: severityForIssue(e.type === 'error' ? 'console_error' : 'console_warn'),
-      title: e.text.slice(0, 200),
-      description: `RUNTIME OBSERVED console.${e.type}`,
-      occurrences: 1,
-      pages: [e.pageUrl],
-      evidence: { page: e.pageUrl, timestamp: e.timestamp, source: e.sourceUrl, line: e.line, column: e.column },
-    });
-  }
-  for (const e of input.networkFailures) {
-    const type = e.status >= 500 ? 'network_5xx' : e.status >= 400 ? 'network_4xx' : 'network_failure';
-    issues.push({
-      id: e.id,
-      type,
-      category: 'NETWORK',
-      severity: severityForIssue(type, e.status),
-      title: `${e.method} ${e.url} ${e.status || ''}`.trim(),
-      description: e.reason,
-      occurrences: 1,
-      pages: [e.pageUrl],
-      evidence: { url: e.url, page: e.pageUrl, status: e.status, method: e.method },
-    });
-  }
-  for (const a of input.accessibility) {
-    issues.push({
-      id: a.id,
-      type: a.impact === 'critical' ? 'accessibility_critical' : 'accessibility',
-      category: 'ACCESSIBILITY',
-      severity: a.impact === 'critical' ? 'ERROR' : 'WARNING',
-      title: a.rule,
-      description: a.description,
-      occurrences: 1,
-      pages: [a.pageUrl],
-      evidence: { page: a.pageUrl, snippet: a.elementHtml, helpUrl: a.helpUrl },
-    });
-  }
-  for (const s of input.securityFindings.filter((x) => x.status === 'FAIL' || x.status === 'WARNING')) {
-    issues.push({
-      id: s.id,
-      type: s.status === 'FAIL' ? 'security_fail' : 'security_warning',
-      category: 'SECURITY',
-      severity: s.severity,
-      title: s.name,
-      description: s.evidence,
-      occurrences: 1,
-      pages: [],
-      evidence: { snippet: s.evidence },
-    });
-  }
-  for (const seo of input.seoFindings) {
-    for (const i of seo.issues) {
-      issues.push({
-        id: id(),
-        type: 'seo',
-        category: 'SEO',
-        severity: i.severity,
-        title: i.message,
-        description: i.message,
-        occurrences: 1,
-        pages: [seo.pageUrl],
-        evidence: { page: seo.pageUrl },
-      });
-    }
-  }
-  for (const b of input.brokenResources) {
-    issues.push({
-      id: id(),
-      type: 'broken_asset',
-      category: 'ASSETS',
-      severity: severityForIssue('broken_asset', b.status),
-      title: `${b.url} ${b.status}`,
-      description: b.error ?? `Broken ${b.resourceType}`,
-      occurrences: 1,
-      pages: [b.pageUrl],
-      evidence: { url: b.url, page: b.pageUrl, status: b.status },
-    });
-  }
-  return dedupeIssues(issues);
-}

@@ -2,8 +2,16 @@ import Constants from 'expo-constants';
 
 const extra = Constants.expoConfig?.extra as { apiUrl?: string } | undefined;
 
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl || 'http://localhost:3001';
+function resolveApiBaseUrl(): string {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl;
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    return 'http://localhost:3001';
+  }
+  throw new Error('EXPO_PUBLIC_API_URL must be set for production builds');
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export interface CreateScanResponse {
   scanId: string;
@@ -48,4 +56,13 @@ export const api = {
     request<{ success: boolean }>(`/api/scans/${id}/cancel`, { method: 'POST' }),
 
   getScan: (id: string) => request<Record<string, unknown>>(`/api/scans/${id}`),
+
+  getFindings: (id: string, query?: { severity?: string; category?: string; page?: string }) => {
+    const q = new URLSearchParams();
+    if (query?.severity) q.set('severity', query.severity);
+    if (query?.category) q.set('category', query.category);
+    if (query?.page) q.set('page', query.page);
+    const suffix = q.toString() ? `?${q.toString()}` : '';
+    return request<Record<string, unknown>>(`/api/scans/${id}/findings${suffix}`);
+  },
 };

@@ -1,50 +1,41 @@
-# TRACE production stack — Render Blueprint (free tier)
-# Deploy: https://render.com/deploy?repo=https://github.com/jo-ltk/console-trace
+# TRACE production — Render Blueprint
+# Separate persistent API + Playwright worker (not serverless, not colocated).
 #
-# Render has NO free background workers. API + BullMQ worker run together in one
-# free web service via docker/start-stack.sh (same scan pipeline as docker-compose).
+# Worker plan is standard (2 GB) because Chromium will OOM on 512 MB starter.
+# Postgres basic-1gb: free instances expire. Redis noeviction: BullMQ keys must not be LRU-evicted.
 #
-# Free-tier caveats (honest):
-# - Web: 512 MB RAM, spins down after 15 min idle, 750 instance-hours/month
-# - Postgres: 256 MB, 1 GB storage, expires 30 days after creation
-# - Redis (Key Value): 25 MB, in-memory only (queue state lost on restart)
-# - Playwright on 512 MB is tight; simple scans work; complex sites may OOM
-#
+# Apply from the Render Dashboard → New → Blueprint, using this repo.
 # Secrets are injected by Render; never commit credentials.
 
 databases:
   - name: trace-db
-    plan: free
+    plan: basic-1gb
     postgresMajorVersion: "16"
     databaseName: trace
     user: trace
+    region: oregon
+    ipAllowList: []
 
 services:
   - type: keyvalue
     name: trace-redis
-    plan: free
-    maxmemoryPolicy: allkeys-lru
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: noeviction
     ipAllowList: []
 
   - type: web
     name: trace-api
     runtime: docker
-    plan: free
+    plan: starter
     region: oregon
     dockerfilePath: ./Dockerfile
-    dockerCommand: sh docker/start-stack.sh
+    dockerCommand: npx tsx server/src/api/index.ts
     healthCheckPath: /health
     autoDeploy: true
+    maxShutdownDelaySeconds: 30
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: trace-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: trace-redis
-          property: connectionString
+      - fromGroup: trace-runtime
       - key: API_PORT
         fromService:
           type: web
@@ -55,8 +46,41 @@ services:
           type: web
           name: trace-api
           envVarKey: RENDER_EXTERNAL_URL
+
+  - type: worker
+    name: trace-worker
+    runtime: docker
+    plan: standard
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerCommand: npx tsx server/src/worker/index.ts
+    autoDeploy: true
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - fromGroup: trace-runtime
+
+envVarGroups:
+  - name: trace-runtime
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trace-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: trace-redis
+          property: connectionString
       - key: ALLOW_LOCAL_TARGETS
         value: "false"
+      - key: CORS_ORIGINS
+        value: ""
       - key: ARTIFACT_DIR
         value: /tmp/artifacts
       - key: SCAN_MAX_PAGES

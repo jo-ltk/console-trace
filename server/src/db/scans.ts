@@ -1,5 +1,6 @@
 import type { ScanOptions, ScanResult, ScanStatus } from '../../../src/server/types/scan-types.ts';
 import { pool } from './pool.ts';
+import { log } from '../log.ts';
 
 export async function insertScan(row: {
   id: string;
@@ -75,16 +76,16 @@ async function persistChildren(scanId: string, result: ScanResult) {
     await client.query('BEGIN');
     for (const p of result.pages) {
       await client.query(
-        `INSERT INTO scan_pages (scan_id, url, title, status, status_code, issues_count, duration_ms, depth)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [scanId, p.url, p.title, p.status, p.statusCode, p.issuesCount, p.duration, p.depth],
+        `INSERT INTO scan_pages (id, scan_id, url, title, status, status_code, issues_count, duration_ms, depth)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [p.id, scanId, p.url, p.title, p.status, p.statusCode, p.issuesCount, p.duration, p.depth],
       );
     }
     for (const e of result.consoleEvents) {
       await client.query(
-        `INSERT INTO console_events (scan_id, type, text, page_url, timestamp, source_url, line, col, args, classification)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [scanId, e.type, e.text, e.pageUrl, e.timestamp, e.sourceUrl ?? null, e.line ?? null, e.column ?? null, JSON.stringify(e.args ?? []), e.classification],
+        `INSERT INTO console_events (scan_id, type, text, page_url, timestamp, source_url, line, col, args, classification, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [scanId, e.type, e.text, e.pageUrl, e.timestamp, e.sourceUrl ?? null, e.line ?? null, e.column ?? null, JSON.stringify(e.args ?? []), e.classification, e.source],
       );
     }
     for (const e of result.runtimeErrors) {
@@ -139,9 +140,38 @@ async function persistChildren(scanId: string, result: ScanResult) {
         [scanId, i.type, i.category, i.severity, i.title, i.description, i.occurrences, JSON.stringify(i.pages), JSON.stringify(i.evidence)],
       );
     }
+    const pageIds = new Set(result.pages.map((p) => p.id));
+    for (const f of result.findings ?? []) {
+      const pageId = f.pageId && pageIds.has(f.pageId) ? f.pageId : null;
+      await client.query(
+        `INSERT INTO findings (
+           id, scan_id, page_id, category, severity, title, summary, description,
+           evidence_json, recommendation, confidence, occurrences, dedupe_key,
+           first_observed_at, last_observed_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          f.id,
+          scanId,
+          pageId,
+          f.category,
+          f.severity,
+          f.title,
+          f.summary,
+          f.description,
+          JSON.stringify(f.evidence),
+          f.recommendation,
+          f.confidence,
+          f.occurrences,
+          f.dedupeKey,
+          f.firstObservedAt || null,
+          f.lastObservedAt || null,
+        ],
+      );
+    }
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
+    log.error('persist_children_failed', { scanId, error: (err as Error).message });
     throw err;
   } finally {
     client.release();

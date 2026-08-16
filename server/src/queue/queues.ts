@@ -13,7 +13,12 @@ let _scanQueue: Queue | undefined;
 
 export function getRedis(): IORedis {
   if (!_connection) {
-    _connection = new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
+    const tls = config.redisUrl.startsWith('rediss://') ? {} : undefined;
+    _connection = new IORedis(config.redisUrl, {
+      maxRetriesPerRequest: null,
+      family: 0,
+      tls,
+    });
   }
   return _connection;
 }
@@ -121,7 +126,38 @@ export function createScanWorker() {
     log.error('scan_worker_failed', { jobId: job?.id, error: err.message });
   });
 
+  worker.on('ready', () => {
+    log.info('worker_ready', { queue: 'scan' });
+  });
+
+  const beat = async () => {
+    try {
+      await getRedis().set('trace:worker:heartbeat', String(Date.now()), 'EX', 45);
+    } catch (err) {
+      log.warn('worker_heartbeat_failed', { error: (err as Error).message });
+    }
+  };
+  void beat();
+  const beatTimer = setInterval(() => void beat(), 15_000);
+  if (typeof beatTimer.unref === 'function') beatTimer.unref();
+
+  worker.on('closed', () => {
+    clearInterval(beatTimer);
+  });
+
   return worker;
+}
+
+export async function closeQueueInfrastructure(worker?: Worker): Promise<void> {
+  if (worker) await worker.close();
+  if (_scanQueue) {
+    await _scanQueue.close();
+    _scanQueue = undefined;
+  }
+  if (_connection) {
+    await _connection.quit();
+    _connection = undefined;
+  }
 }
 
 export { getRedis as connection };

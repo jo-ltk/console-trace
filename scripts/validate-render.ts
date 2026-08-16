@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Validate render.yaml structure for the TRACE free-tier deployment.
+ * Validate render.yaml for split API + persistent Playwright worker.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,19 +10,22 @@ const text = fs.readFileSync(file, 'utf8');
 
 const errors: string[] = [];
 
-if (!text.includes('plan: free')) errors.push('Expected plan: free entries');
-if (text.includes('plan: starter')) errors.push('Found paid plan: starter');
-if (text.includes('plan: standard')) errors.push('Found paid plan: standard');
-if (text.includes('plan: basic-')) errors.push('Found paid postgres plan');
-if (text.includes('type: worker')) errors.push('Separate worker service is not free on Render');
-if (!text.includes('docker/start-stack.sh')) errors.push('Missing colocated stack command');
-if (!text.includes('healthCheckPath: /health')) errors.push('Missing health check');
-if (!text.includes('fromDatabase')) errors.push('Missing DATABASE_URL wiring');
+if (!text.includes('type: web')) errors.push('Missing API web service');
+if (!text.includes('type: worker')) errors.push('Missing persistent worker service');
 if (!text.includes('type: keyvalue')) errors.push('Missing Redis service');
-
-const paidPatterns = [/plan:\s*starter/i, /plan:\s*standard/i, /plan:\s*pro/i, /plan:\s*basic-/i];
-for (const pattern of paidPatterns) {
-  if (pattern.test(text)) errors.push(`Paid plan pattern matched: ${pattern}`);
+if (!text.includes('fromDatabase')) errors.push('Missing DATABASE_URL wiring');
+if (!text.includes('healthCheckPath: /health')) errors.push('Missing API health check');
+if (!text.includes('npx tsx server/src/api/index.ts')) errors.push('API dockerCommand must start Fastify');
+if (!text.includes('npx tsx server/src/worker/index.ts')) errors.push('Worker dockerCommand must start BullMQ worker');
+if (text.includes('docker/start-stack.sh')) {
+  errors.push('Colocated start-stack.sh is not allowed for production Render');
+}
+if (text.includes('plan: free')) errors.push('Free-tier services are not production (Postgres expires; no worker)');
+if (!text.includes('maxmemoryPolicy: noeviction')) {
+  errors.push('Redis must use noeviction so BullMQ keys are not evicted');
+}
+if (!text.includes('plan: standard')) {
+  errors.push('Worker should use standard (2 GB) for Chromium');
 }
 
 if (errors.length) {
@@ -32,6 +35,7 @@ if (errors.length) {
 }
 
 console.log('render.yaml validation OK');
-console.log('  - all services use plan: free');
-console.log('  - API + worker colocated via docker/start-stack.sh');
-console.log('  - no separate paid worker service');
+console.log('  - API is a persistent Docker web service');
+console.log('  - worker is a separate persistent Docker background worker');
+console.log('  - PostgreSQL + Redis wired via env groups');
+console.log('  - no colocated/serverless scanner');

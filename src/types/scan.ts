@@ -9,6 +9,7 @@ export interface ConsoleObservation {
   pageUrl: string;
   timestamp: string;
   source?: string;
+  origin: 'TARGET' | 'SCANNER' | 'BROWSER';
   line?: number;
   column?: number;
 }
@@ -61,8 +62,57 @@ export interface PageResult {
   url: string;
   title: string;
   status: 'healthy' | 'warning' | 'error';
+  statusCode?: number;
   issuesCount: number;
   duration: number;
+}
+
+export type FindingSeverity = 'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO';
+export type FindingCategory =
+  | 'console'
+  | 'runtime'
+  | 'network'
+  | 'assets'
+  | 'performance'
+  | 'accessibility'
+  | 'security'
+  | 'seo';
+
+export interface ClientFinding {
+  id: string;
+  category: FindingCategory;
+  severity: FindingSeverity;
+  title: string;
+  summary: string;
+  description: string;
+  evidenceText: string;
+  evidence: Record<string, unknown>;
+  pageUrl?: string;
+  url?: string;
+  occurrences: number;
+  firstObservedAt: string;
+  recommendation: string;
+  whyItMatters: string;
+  confidence: string;
+  pages: string[];
+}
+
+export interface ScoreBreakdown {
+  overall: number;
+  runtime: number;
+  network: number;
+  console: number;
+  performance: number;
+  accessibility: number;
+  security: number;
+  seo: number;
+  assets: number;
+  explanations: Record<string, string[]>;
+}
+
+export interface FindingsSummaryClient {
+  total: number;
+  severity: { critical: number; error: number; warning: number; info: number };
 }
 
 export interface ScanResult {
@@ -76,6 +126,9 @@ export interface ScanResult {
   totalPages: number;
   healthScore: number;
   previousScore?: number;
+  scores?: ScoreBreakdown;
+  findings: ClientFinding[];
+  findingsSummary?: FindingsSummaryClient;
   summary: {
     consoleCount: number;
     runtimeCount: number;

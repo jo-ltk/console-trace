@@ -48,11 +48,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${API_BASE}/health`);
-      if (res.ok) return;
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        database?: boolean;
+        redis?: boolean;
+        worker?: string;
+      };
+      if (res.ok && body.ok && body.database && body.redis) {
+        console.log(`[ok] API health database=${body.database} redis=${body.redis} worker=${body.worker}`);
+        return;
+      }
     } catch {
       /* retry */
     }
@@ -115,6 +124,9 @@ async function main() {
     throw new Error('Results missing scan metadata — not observed');
   }
 
+  const meta = await request<{ scanId: string; url: string; status: string }>(`/api/scans/${created.scanId}`);
+  const findings = await request<{ total: number; findings: unknown[] }>(`/api/scans/${created.scanId}/findings`);
+
   console.log('');
   console.log('RESULTS (observed)');
   console.log(`  pages:     ${result.summary.pagesScanned}`);
@@ -122,8 +134,10 @@ async function main() {
   console.log(`  console:   ${result.summary.consoleEvents}`);
   console.log(`  runtime:   ${result.summary.runtimeErrors}`);
   console.log(`  network:   ${result.summary.networkFailures}`);
+  console.log(`  findings:  ${findings.total}`);
   console.log(`  health:    ${result.scores.overall} / 100`);
   console.log(`  duration:  ${result.scan.durationMs}ms`);
+  console.log(`  meta url:  ${meta.url}`);
 
   if (result.summary.pagesScanned < 1) {
     throw new Error('No pages scanned — smoke test failed');

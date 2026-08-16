@@ -53,6 +53,7 @@ function renderHtml(result: ScanResult): string {
     <tr><td>Network failures</td><td>${s.networkFailures}</td></tr>
     <tr><td>Accessibility violations</td><td>${s.accessibilityViolations}</td></tr>
     <tr><td>Broken assets</td><td>${s.brokenAssets}</td></tr>
+    <tr><td>Normalized findings</td><td>${s.findings ?? result.findings.length}</td></tr>
   </table>
   <p><small>Generated from observed browser data. Values not observed are marked NOT AVAILABLE in the JSON export.</small></p>
 </body>

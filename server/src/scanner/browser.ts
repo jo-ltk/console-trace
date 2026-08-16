@@ -1,6 +1,7 @@
 import { chromium, devices, type Browser, type BrowserContext, type BrowserContextOptions } from 'playwright';
 import type { ScanDevice } from '../../../src/server/types/scan-types.ts';
 import { config } from '../config.ts';
+import { log } from '../log.ts';
 
 const TRACE_SUFFIX = ' TRACE/1.0';
 
@@ -10,10 +11,13 @@ export interface BrowserFactoryOptions {
 }
 
 export async function launchBrowser(): Promise<Browser> {
-  return chromium.launch({
+  log.info('chromium_launching', {});
+  const browser = await chromium.launch({
     headless: true,
-    args: ['--disable-dev-shm-usage'],
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
   });
+  log.info('chromium_launched', { version: browser.version() });
+  return browser;
 }
 
 export function contextOptions(opts: BrowserFactoryOptions): BrowserContextOptions {

@@ -64,13 +64,23 @@ describe.skipIf(!servicesUp)('integration suite', () => {
 
       const result = await fetchScanResults(app, scanId);
       expect(result.scan.id).toBe(scanId);
-      expect(result.pages.length).toBeGreaterThan(1);
+      expect(result.pages.length).toBeGreaterThanOrEqual(5);
+      expect(new Set(result.pages.map((p) => p.url)).size).toBe(result.pages.length);
       expect(result.summary.requestsObserved).toBeGreaterThan(0);
-      expect(result.consoleEvents.some((e) => e.text.includes('fixture-error-message'))).toBe(true);
+      expect(result.consoleEvents.some((e) => e.text.includes('fixture-error-message') && e.source === 'TARGET')).toBe(true);
       expect(result.runtimeErrors.some((e) => e.message.includes('fixture-uncaught-exception'))).toBe(true);
       expect(result.networkFailures.some((e) => e.url.includes('/api/fail') && e.status === 500)).toBe(true);
       expect(result.brokenResources.some((e) => e.url.includes('missing.png') && e.status === 404)).toBe(true);
       expect(result.accessibility.length).toBeGreaterThan(0);
+      expect(result.findings.some((f) => f.kind === 'console_error')).toBe(true);
+      expect(result.findings.some((f) => f.kind === 'network_5xx')).toBe(true);
+      expect(result.findings.some((f) => f.kind === 'asset_broken')).toBe(true);
+      expect(result.findings.length).toBe(result.summary.findings);
+
+      const findingsRes = await app.inject({ method: 'GET', url: `/api/scans/${scanId}/findings?severity=ERROR` });
+      expect(findingsRes.statusCode).toBe(200);
+      const findingsBody = findingsRes.json() as { findings: Array<{ severity: string }> };
+      expect(findingsBody.findings.every((f) => f.severity === 'ERROR')).toBe(true);
       expect(result.scores.overall).toBeGreaterThanOrEqual(0);
       expect(result.scores.overall).toBeLessThanOrEqual(100);
 

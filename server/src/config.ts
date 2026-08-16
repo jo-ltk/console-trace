@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseCorsOrigins } from './security/cors.ts';
 
 function loadEnvFile() {
   const envPath = path.resolve(process.cwd(), '.env');
@@ -31,11 +32,37 @@ function bool(name: string, fallback: boolean): boolean {
   return raw === 'true' || raw === '1';
 }
 
+const nodeEnv = process.env.NODE_ENV ?? 'development';
+
+export function assertProductionEnv(): void {
+  if (nodeEnv !== 'production') return;
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required in production');
+  }
+  if (!process.env.REDIS_URL) {
+    throw new Error('REDIS_URL is required in production');
+  }
+}
+
+function databaseSsl(): boolean | { rejectUnauthorized: boolean } | undefined {
+  if (bool('DATABASE_SSL', false)) {
+    return { rejectUnauthorized: bool('DATABASE_SSL_REJECT_UNAUTHORIZED', true) };
+  }
+  const url = process.env.DATABASE_URL ?? '';
+  if (url.includes('sslmode=require') || url.includes('sslmode=verify')) {
+    return { rejectUnauthorized: bool('DATABASE_SSL_REJECT_UNAUTHORIZED', true) };
+  }
+  return undefined;
+}
+
 export const config = {
+  nodeEnv,
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://trace:trace@localhost:5432/trace',
+  databaseSsl: databaseSsl(),
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
-  apiPort: num('API_PORT', 3001),
+  apiPort: num('API_PORT', num('PORT', 3001)),
   apiBaseUrl: process.env.API_BASE_URL ?? 'http://localhost:3001',
+  corsOrigins: parseCorsOrigins(process.env.CORS_ORIGINS, nodeEnv),
   allowLocalTargets: bool('ALLOW_LOCAL_TARGETS', false),
   scanMaxPages: num('SCAN_MAX_PAGES', 20),
   scanHardMaxPages: num('SCAN_HARD_MAX_PAGES', 100),
