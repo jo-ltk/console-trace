@@ -10,6 +10,7 @@ import type {
   FormFinding,
   NetworkEvent,
   NetworkFailure,
+  ScannerBlockedRequest,
   PerformanceMetrics,
   PwaObservation,
   RedirectChain,
@@ -51,11 +52,12 @@ import {
 import {
   buildApiInventory,
   classifyApi,
-  isBenignRequestFailure,
   mapResourceType,
   parseRobots,
   robotsBlocked,
 } from '../analysis/network.ts';
+import { isActionableBrokenResource, isActionableNetworkFailure } from '../analysis/network-failure.ts';
+import { wouldTraceBlockRequest } from './resource-blocking.ts';
 import { computeHealthScores } from '../scoring/health.ts';
 import { classifyConsoleSource, isTargetConsoleEvent, mapPlaywrightConsoleType } from './console-source.ts';
 import { buildFindings } from '../findings/pipeline.ts';
@@ -90,6 +92,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
   const runtimeErrors: RuntimeErrorEvent[] = [];
   const networkEvents: NetworkEvent[] = [];
   const networkFailures: NetworkFailure[] = [];
+  const scannerBlockedRequests: ScannerBlockedRequest[] = [];
   const webSockets: WebSocketObservation[] = [];
   const pages: ScannedPageResult[] = [];
   const forms: FormFinding[] = [];
@@ -469,8 +472,15 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
     const thirdParty = buildThirdParty(networkEvents, input.url);
     const brokenResources = networkEvents
       .filter((e) => ['image', 'script', 'stylesheet', 'font', 'media', 'manifest', 'document'].includes(e.resourceType))
-      .filter((e) => !isBenignRequestFailure(e.failureReason))
-      .filter((e) => e.status === 404 || e.status === 410 || e.status >= 500 || Boolean(e.failureReason))
+      .filter((e) =>
+        isActionableBrokenResource({
+          status: e.status,
+          failureReason: e.failureReason,
+          resourceType: e.resourceType,
+          url: e.url,
+          startUrl: input.url,
+        }),
+      )
       .map((e) => ({
         url: e.url,
         pageUrl: e.pageUrl,
@@ -483,6 +493,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
 
     const findings = buildFindings({
       scanId: input.scanId,
+      targetUrl: input.url,
       pages,
       consoleEvents,
       runtimeErrors,
@@ -553,6 +564,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
         consoleBrowserEvents: consoleEvents.filter((e) => e.source === 'BROWSER').length,
         runtimeErrors: runtimeErrors.length,
         networkFailures: networkFailures.length,
+        scannerBlockedRequests: scannerBlockedRequests.length,
         accessibilityViolations: accessibility.length,
         securityFindings: securityFindings.filter((s) => s.status === 'FAIL' || s.status === 'WARNING').length,
         brokenAssets: brokenResources.length,
@@ -571,6 +583,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
       runtimeErrors,
       networkEvents,
       networkFailures,
+      scannerBlockedRequests,
       apiInventory: buildApiInventory(networkEvents),
       performance,
       accessibility,
@@ -704,7 +717,31 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
         apiType: classifyApi({ resourceType, method: req.method(), url: req.url(), postData: req.postData() ?? undefined }).apiType,
       };
       networkEvents.push(ev);
-      if (!isBenignRequestFailure(failure) && networkFailures.length < config.scanMaxRequests) {
+      const blockedByTrace = wouldTraceBlockRequest(resourceType, req.url(), input.url);
+      if (blockedByTrace) {
+        if (scannerBlockedRequests.length < config.scanMaxRequests) {
+          scannerBlockedRequests.push({
+            id: id(),
+            url: ev.url,
+            method: ev.method,
+            resourceType,
+            reason: failure,
+            pageUrl: currentPageUrl,
+            duration,
+          });
+        }
+        return;
+      }
+      if (
+        isActionableNetworkFailure({
+          status: 0,
+          reason: failure,
+          resourceType,
+          url: ev.url,
+          startUrl: input.url,
+        }) &&
+        networkFailures.length < config.scanMaxRequests
+      ) {
         networkFailures.push({
           id: id(),
           url: ev.url,
@@ -759,7 +796,17 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
           securityFindings.push(...analyzeCorsHeaders(res.headers(), req.url()));
         }
       }
-      if (status >= 400 && networkFailures.length < config.scanMaxRequests) {
+      if (
+        status >= 400 &&
+        isActionableNetworkFailure({
+          status,
+          reason: `${status} ${res.statusText()}`,
+          resourceType,
+          url: ev.url,
+          startUrl: input.url,
+        }) &&
+        networkFailures.length < config.scanMaxRequests
+      ) {
         networkFailures.push({
           id: id(),
           url: ev.url,

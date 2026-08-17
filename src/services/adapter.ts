@@ -18,6 +18,7 @@ export function toClientScan(raw: Record<string, unknown>): ClientScan {
   const consoleEvents = (raw.consoleEvents ?? []) as Array<Record<string, unknown>>;
   const runtimeErrors = (raw.runtimeErrors ?? []) as Array<Record<string, unknown>>;
   const networkFailures = (raw.networkFailures ?? []) as Array<Record<string, unknown>>;
+  const scannerBlocked = (raw.scannerBlockedRequests ?? []) as Array<Record<string, unknown>>;
   const accessibility = (raw.accessibility ?? []) as Array<Record<string, unknown>>;
   const pages = (raw.pages ?? []) as Array<Record<string, unknown>>;
   const performance = (raw.performance ?? {}) as Record<string, unknown>;
@@ -61,7 +62,8 @@ export function toClientScan(raw: Record<string, unknown>): ClientScan {
     summary: {
       consoleCount: Number(summary.consoleEvents ?? 0),
       runtimeCount: Number(summary.runtimeErrors ?? 0),
-      networkCount: Number(summary.networkFailures ?? 0),
+      networkCount: Number(summary.networkFailures ?? networkFailures.length),
+      scannerBlockedCount: Number(summary.scannerBlockedRequests ?? scannerBlocked.length),
       assetsCount: Number(summary.brokenAssets ?? 0),
       performanceRating: String(scores.performance ?? 'NOT AVAILABLE'),
       accessibilityCount: Number(summary.accessibilityViolations ?? 0),
@@ -93,6 +95,17 @@ export function toClientScan(raw: Record<string, unknown>): ClientScan {
       duration: Number(n.duration ?? 0),
       pageUrl: String(n.pageUrl ?? ''),
       type: 'failed' as const,
+      reason: n.reason ? String(n.reason) : undefined,
+      resourceType: n.resourceType ? String(n.resourceType) : undefined,
+    })),
+    scannerBlockedRequests: scannerBlocked.map((n) => ({
+      id: String(n.id),
+      method: String(n.method ?? 'GET'),
+      url: String(n.url ?? ''),
+      resourceType: String(n.resourceType ?? 'other'),
+      reason: String(n.reason ?? 'blocked by TRACE'),
+      pageUrl: String(n.pageUrl ?? ''),
+      duration: Number(n.duration ?? 0),
     })),
     performanceMetrics: {
       lcp: metricToNumber(performance.lcp, true),

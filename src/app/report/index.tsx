@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,8 @@ import { triggerHaptic } from '../../utils/haptics';
 import { api } from '../../services/api';
 import { toClientScan, mapFinding } from '../../services/adapter';
 import type { ScanResult, ClientFinding, FindingSeverity } from '../../types/scan';
+import { ScoreReveal } from '../../components/ui/ScoreReveal';
+import { primaryFindingCount, primaryFindings, scoreLabel, topFindings } from '../../utils/findings';
 
 type TabType =
   | 'overview'
@@ -37,12 +39,13 @@ type TabType =
 export default function ReportScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; reveal?: string }>();
   const recentScans = useAppStore((s) => s.recentScans);
   const addRecentScan = useAppStore((s) => s.addRecentScan);
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [fetched, setFetched] = useState<ScanResult | null>(null);
+  const [showReveal, setShowReveal] = useState(params.reveal === '1');
 
   useEffect(() => {
     if (!params.id) return;
@@ -72,6 +75,17 @@ export default function ReportScreen() {
   }, [params.id]);
 
   const scan = fetched || recentScans.find((s) => s.id === params.id);
+
+  const actionableFindings = useMemo(() => primaryFindings(scan?.findings ?? []), [scan?.findings]);
+  const overviewFindings = useMemo(() => topFindings(scan?.findings ?? []), [scan?.findings]);
+  const networkFindings = useMemo(
+    () => (scan?.findings ?? []).filter((f) => f.category === 'network' || f.category === 'assets'),
+    [scan?.findings],
+  );
+  const actionableNetworkIssues = useMemo(
+    () => (scan?.networkIssues ?? []).filter((n) => n.status >= 400),
+    [scan?.networkIssues],
+  );
 
   const openFinding = (scanId: string, findingId: string) => {
     triggerHaptic('light');
@@ -105,6 +119,13 @@ export default function ReportScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      {scan && (
+        <ScoreReveal
+          visible={showReveal}
+          scan={scan}
+          onComplete={() => setShowReveal(false)}
+        />
+      )}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
@@ -113,15 +134,21 @@ export default function ReportScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <TraceHeader statusText="AUDIT REPORT" statusType="ready" />
+        <TraceHeader
+          statusText={scan.status === 'completed' ? 'SCAN COMPLETED' : 'AUDIT REPORT'}
+          statusType="ready"
+        />
 
         {/* Target Header & Health Score Banner */}
         <TraceCard style={styles.scoreCard}>
           <View style={styles.scoreRow}>
             <View style={{ flex: 1 }}>
-              <Text style={[Typography.pixelLabel, { color: Colors.muted }]}>TARGET AUDIT</Text>
+              <Text style={[Typography.pixelLabel, { color: Colors.muted }]}>HEALTH SCORE</Text>
               <Text style={[Typography.headline, { color: Colors.ink, marginTop: 4 }]} numberOfLines={1}>
                 {scan.normalizedUrl.replace(/^https?:\/\//, '')}
+              </Text>
+              <Text style={[Typography.caption, { color: getScoreColor(scan.healthScore), marginTop: 2, fontWeight: '600' }]}>
+                {scoreLabel(scan.healthScore)}
               </Text>
               <Text style={[Typography.caption, { color: Colors.muted, marginTop: 2 }]}>
                 {scan.startedAt} · {scan.pagesScanned || scan.pages?.length || 1} pages analyzed
@@ -152,7 +179,7 @@ export default function ReportScreen() {
             onPress={() => setActiveTab('overview')}
           />
           <TabButton
-            title={`Issues (${scan.findingsSummary?.total ?? scan.findings?.length ?? 0})`}
+            title={`Issues (${primaryFindingCount(scan.findings ?? [])})`}
             active={activeTab === 'issues'}
             onPress={() => setActiveTab('issues')}
           />
@@ -167,7 +194,7 @@ export default function ReportScreen() {
             onPress={() => setActiveTab('runtime')}
           />
           <TabButton
-            title={`Network (${scan.networkIssues?.length || scan.summary.networkCount})`}
+            title={`Network (${actionableNetworkIssues.length || networkFindings.length})`}
             active={activeTab === 'network'}
             onPress={() => setActiveTab('network')}
           />
@@ -201,12 +228,31 @@ export default function ReportScreen() {
         {/* TAB CONTENTS */}
         {activeTab === 'overview' && (
           <View style={styles.section}>
-            <Text style={[Typography.pixelLabel, styles.sectionTitle]}>ISSUES</Text>
+            <Text style={[Typography.pixelLabel, styles.sectionTitle]}>PRIORITY FINDINGS</Text>
+            {overviewFindings.length > 0 ? (
+              overviewFindings.map((f) => (
+                <FindingRow key={f.id} finding={f} onPress={() => openFinding(scan.id, f.id)} />
+              ))
+            ) : (
+              <TraceCard style={styles.emptyCard}>
+                <Text style={[Typography.bodyMedium, { color: Colors.muted }]}>
+                  No critical, error, or warning findings observed.
+                </Text>
+              </TraceCard>
+            )}
+            {(scan.findings ?? []).length > overviewFindings.length && (
+              <TouchableOpacity onPress={() => setActiveTab('issues')} style={{ marginTop: Spacing.sm }}>
+                <Text style={[Typography.caption, { color: Colors.ink, textDecorationLine: 'underline' }]}>
+                  View all {actionableFindings.length} actionable findings
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <Text style={[Typography.pixelLabel, [styles.sectionTitle, { marginTop: Spacing.lg }]]}>ISSUES</Text>
             <View style={styles.summaryGrid}>
               <SummaryItem label="CRITICAL" count={scan.findingsSummary?.severity.critical ?? 0} type="error" />
               <SummaryItem label="ERROR" count={scan.findingsSummary?.severity.error ?? 0} type="error" />
               <SummaryItem label="WARNING" count={scan.findingsSummary?.severity.warning ?? 0} type="warn" />
-              <SummaryItem label="INFO" count={scan.findingsSummary?.severity.info ?? 0} type="log" />
             </View>
 
             <Text style={[Typography.pixelLabel, [styles.sectionTitle, { marginTop: Spacing.lg }]]}>
@@ -237,6 +283,12 @@ export default function ReportScreen() {
               <SummaryItem label="NETWORK FAILS" count={scan.summary.networkCount} type="network" />
               <SummaryItem label="A11Y ISSUES" count={scan.summary.accessibilityCount} type="warn" />
             </View>
+            {(scan.summary.scannerBlockedCount ?? scan.scannerBlockedRequests?.length ?? 0) > 0 && (
+              <Text style={[Typography.caption, { color: Colors.muted, marginTop: Spacing.sm }]}>
+                {scan.summary.scannerBlockedCount ?? scan.scannerBlockedRequests?.length ?? 0} third-party resources were
+                blocked by TRACE and excluded from website findings.
+              </Text>
+            )}
 
             <Text style={[Typography.pixelLabel, [styles.sectionTitle, { marginTop: Spacing.lg }]]}>
               PERFORMANCE BENCHMARK
@@ -252,14 +304,24 @@ export default function ReportScreen() {
 
         {activeTab === 'issues' && (
           <View style={styles.section}>
-            <Text style={[Typography.pixelLabel, styles.sectionTitle]}>FINDINGS BY SEVERITY</Text>
-            {(scan.findings ?? []).length > 0 ? (
-              (scan.findings ?? []).map((f) => (
+            <Text style={[Typography.pixelLabel, styles.sectionTitle]}>ACTIONABLE FINDINGS</Text>
+            <Text style={[Typography.caption, { color: Colors.muted, marginBottom: Spacing.sm }]}>
+              INFO-level observations are hidden here. Scanner artifacts are excluded at the findings layer.
+            </Text>
+            {actionableFindings.length > 0 ? (
+              actionableFindings.map((f) => (
                 <FindingRow key={f.id} finding={f} onPress={() => openFinding(scan.id, f.id)} />
               ))
             ) : (
               <TraceCard style={styles.emptyCard}>
-                <Text style={[Typography.bodyMedium, { color: Colors.muted }]}>No normalized findings.</Text>
+                <Text style={[Typography.bodyMedium, { color: Colors.muted }]}>No actionable findings.</Text>
+              </TraceCard>
+            )}
+            {(scan.findings ?? []).some((f) => f.severity === 'INFO') && (
+              <TraceCard style={{ ...styles.emptyCard, marginTop: Spacing.sm }}>
+                <Text style={[Typography.bodySmall, { color: Colors.muted }]}>
+                  {(scan.findings ?? []).filter((f) => f.severity === 'INFO').length} INFO finding(s) available in category tabs.
+                </Text>
               </TraceCard>
             )}
           </View>
@@ -361,8 +423,15 @@ export default function ReportScreen() {
         {activeTab === 'network' && (
           <View style={styles.section}>
             <Text style={[Typography.pixelLabel, styles.sectionTitle]}>NETWORK & API FAILURES</Text>
-            {scan.networkIssues && scan.networkIssues.length > 0 ? (
-              scan.networkIssues.map((n) => (
+            <Text style={[Typography.caption, { color: Colors.muted, marginBottom: Spacing.sm }]}>
+              Only confirmed HTTP failures and evidenced network errors. GET 0 blocked by TRACE are not shown here.
+            </Text>
+            {networkFindings.length > 0 ? (
+              networkFindings.map((f) => (
+                <FindingRow key={f.id} finding={f} onPress={() => openFinding(scan.id, f.id)} />
+              ))
+            ) : actionableNetworkIssues.length > 0 ? (
+              actionableNetworkIssues.map((n) => (
                 <TraceCard key={n.id} style={styles.issueCard}>
                   <View style={styles.issueHeader}>
                     <Text style={[Typography.pixelLabel, { color: Colors.accent }]}>
@@ -378,9 +447,38 @@ export default function ReportScreen() {
             ) : (
               <TraceCard style={styles.emptyCard}>
                 <Text style={[Typography.bodyMedium, { color: Colors.muted }]}>
-                  NOT OBSERVED
+                  No actionable network failures observed.
                 </Text>
               </TraceCard>
+            )}
+
+            {(scan.scannerBlockedRequests?.length ?? 0) > 0 && (
+              <>
+                <Text style={[Typography.pixelLabel, styles.sectionTitle, { marginTop: Spacing.lg }]}>
+                  IGNORED BY TRACE
+                </Text>
+                <Text style={[Typography.caption, { color: Colors.muted, marginBottom: Spacing.sm }]}>
+                  Resources intentionally blocked by scanner rules (fonts, media, third-party images). Not website issues.
+                </Text>
+                {scan.scannerBlockedRequests.slice(0, 12).map((n) => (
+                  <TraceCard key={n.id} style={styles.issueCard}>
+                    <View style={styles.issueHeader}>
+                      <Text style={[Typography.pixelLabel, { color: Colors.muted }]}>
+                        [BLOCKED · {n.resourceType.toUpperCase()}]
+                      </Text>
+                      <Text style={[Typography.caption, { color: Colors.muted }]}>{n.duration}ms</Text>
+                    </View>
+                    <Text style={[Typography.codeSnippet, styles.codeText, { marginTop: 4 }]} numberOfLines={2}>
+                      {n.url}
+                    </Text>
+                  </TraceCard>
+                ))}
+                {scan.scannerBlockedRequests.length > 12 && (
+                  <Text style={[Typography.caption, { color: Colors.muted, marginTop: Spacing.xs }]}>
+                    +{scan.scannerBlockedRequests.length - 12} more blocked requests
+                  </Text>
+                )}
+              </>
             )}
           </View>
         )}

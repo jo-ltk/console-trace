@@ -41,7 +41,9 @@ export default function ScanProgressScreen() {
 
   const targetUrl = params.url || currentConfig.url;
   const [status, setStatus] = useState('queued');
-  const [error, setError] = useState<string | null>(null);
+  const [scanFailed, setScanFailed] = useState(false);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const [scanId, setScanId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,7 +52,8 @@ export default function ScanProgressScreen() {
 
     const run = async () => {
       if (!targetUrl) {
-        setError('No target URL');
+        setScanFailed(true);
+        setFailureReason('No target URL');
         return;
       }
       try {
@@ -68,15 +71,19 @@ export default function ScanProgressScreen() {
         setActiveScanId(created.scanId);
         setStatus(created.status);
 
+        let pollFailures = 0;
         timer = setInterval(async () => {
           try {
             const st = await api.getStatus(created.scanId);
             if (cancelled) return;
+            setPollError(null);
+            pollFailures = 0;
             setStatus(st.status);
             if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(st.status)) {
               if (timer) clearInterval(timer);
               if (st.status === 'failed') {
-                setError(st.statusReason || 'Scan failed');
+                setScanFailed(true);
+                setFailureReason(st.statusReason || 'Scan failed');
                 triggerHaptic('error');
                 return;
               }
@@ -88,15 +95,21 @@ export default function ScanProgressScreen() {
               const mapped = toClientScan(raw as Record<string, unknown>);
               addRecentScan(mapped);
               triggerHaptic('success');
-              router.replace({ pathname: '/report' as any, params: { id: mapped.id } });
+              router.replace({ pathname: '/report' as any, params: { id: mapped.id, reveal: '1' } });
             }
           } catch (e) {
-            if (!cancelled) setError((e as Error).message);
+            if (!cancelled) {
+              pollFailures += 1;
+              if (pollFailures >= 3) {
+                setPollError((e as Error).message);
+              }
+            }
           }
         }, 1000);
       } catch (e) {
         if (!cancelled) {
-          setError((e as Error).message);
+          setScanFailed(true);
+          setFailureReason((e as Error).message);
           triggerHaptic('error');
         }
       }
@@ -112,6 +125,8 @@ export default function ScanProgressScreen() {
   const idx = stepIndex(status);
   const progressPercent = Math.round(((idx + 1) / SCAN_STEPS.length) * 100);
   const currentStep = SCAN_STEPS[idx];
+  const headerStatus = scanFailed ? 'SCAN FAILED' : 'SCANNING';
+  const headerType = scanFailed ? 'error' : 'active';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -120,7 +135,7 @@ export default function ScanProgressScreen() {
         contentContainerStyle={[styles.contentContainer, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
-        <TraceHeader statusText={error ? 'SCAN ERROR' : 'SCANNING IN PROGRESS'} statusType={error ? 'idle' : 'active'} />
+        <TraceHeader statusText={headerStatus} statusType={headerType} />
 
         <View style={styles.heroSection}>
           <Text style={[Typography.pixelLabel, { color: Colors.accent }]}>LIVE INSPECTION</Text>
@@ -128,7 +143,7 @@ export default function ScanProgressScreen() {
             {(targetUrl || '').replace(/^https?:\/\//, '')}
           </Text>
           <Text style={[Typography.caption, { color: Colors.muted, marginTop: 2 }]}>
-            {status.toUpperCase()} · {progressPercent}%
+            {scanFailed ? 'FAILED' : status.toUpperCase()} · {progressPercent}%
           </Text>
         </View>
 
@@ -138,10 +153,14 @@ export default function ScanProgressScreen() {
 
         <TraceCard style={styles.stepCard}>
           <Text style={[Typography.bodyMedium, { color: Colors.ink, fontWeight: '600' }]}>
-            {error ? error : currentStep.title}
+            {scanFailed ? failureReason : pollError ? 'Reconnecting to scan status…' : currentStep.title}
           </Text>
           <Text style={[Typography.caption, { color: Colors.muted, marginTop: 4 }]}>
-            {error ? 'No fabricated results. TRACE only reports observed data.' : 'Observing a real browser session'}
+            {scanFailed
+              ? 'The scan could not complete. No fabricated results — TRACE only reports observed data.'
+              : pollError
+                ? `Temporary connection issue: ${pollError}`
+                : 'Observing a real browser session'}
           </Text>
         </TraceCard>
 
