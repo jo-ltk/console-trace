@@ -10,6 +10,10 @@ const REQUEST_TIMEOUT_MS = 20000;
 const MAX_RETRIES = 3;
 
 function resolveApiBaseUrl(): string {
+  // Web uses same-origin API routes (EAS Hosting proxy) to avoid browser CORS limits.
+  if (Platform.OS === 'web') {
+    return '';
+  }
   const fromEnv = process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl || PRODUCTION_API_URL;
   return fromEnv.replace(/\/$/, '');
 }
@@ -116,7 +120,7 @@ export const api = {
     return request<Record<string, unknown>>(`/api/scans/${id}/findings${suffix}`);
   },
 
-  /** SSE progress stream (web). Falls back to polling on native or if unsupported. */
+  /** SSE progress stream (web via proxy). Native clients use polling. */
   subscribeScanEvents(
     scanId: string,
     onEvent: (payload: { status: string; statusReason?: string }) => void,
@@ -126,7 +130,7 @@ export const api = {
       return () => undefined;
     }
 
-    const es = new EventSource(`${API_BASE_URL}/api/scans/${scanId}/events`);
+    const es = new EventSource(`/api/scans/${scanId}/events`);
     es.onmessage = (ev) => {
       try {
         onEvent(JSON.parse(ev.data) as { status: string; statusReason?: string });
