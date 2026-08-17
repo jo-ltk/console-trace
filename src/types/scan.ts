@@ -31,6 +31,18 @@ export interface NetworkIssue {
   duration: number; // ms
   pageUrl: string;
   type: 'failed' | 'slow' | 'broken-asset' | 'ok';
+  reason?: string;
+  resourceType?: string;
+}
+
+export interface ScannerBlockedRequest {
+  id: string;
+  method: string;
+  url: string;
+  resourceType: string;
+  reason: string;
+  pageUrl: string;
+  duration: number;
 }
 
 export interface PerformanceMetrics {
@@ -133,6 +145,7 @@ export interface ScanResult {
     consoleCount: number;
     runtimeCount: number;
     networkCount: number;
+    scannerBlockedCount: number;
     assetsCount: number;
     performanceRating: string;
     accessibilityCount: number;
@@ -140,6 +153,7 @@ export interface ScanResult {
   consoleObservations: ConsoleObservation[];
   runtimeIssues: RuntimeIssue[];
   networkIssues: NetworkIssue[];
+  scannerBlockedRequests: ScannerBlockedRequest[];
   performanceMetrics: PerformanceMetrics;
   performanceLabels?: PerformanceLabels;
   accessibilityIssues: AccessibilityIssue[];

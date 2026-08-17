@@ -18,6 +18,7 @@ import type {
   SeoFinding,
 } from '../../../src/server/types/scan-types.ts';
 import { isTargetConsoleEvent } from '../scanner/console-source.ts';
+import { isActionableBrokenResource, isActionableNetworkFailure } from '../analysis/network-failure.ts';
 import { evidenceTextFrom, redactEvidence } from './evidence.ts';
 import { hashKey, normalizeFindingUrl, normalizeMessage, pathOf } from './keys.ts';
 import { recommendationFor, whyItMatters } from './recommendations.ts';
@@ -33,6 +34,7 @@ const ASSET_TYPES = new Set<ResourceType>(['image', 'script', 'stylesheet', 'fon
 
 export interface FindingsInput {
   scanId: string;
+  targetUrl?: string;
   pages: ScannedPageResult[];
   consoleEvents: ConsoleEvent[];
   runtimeErrors: RuntimeErrorEvent[];
@@ -65,8 +67,8 @@ export function buildFindings(input: FindingsInput): Finding[] {
   const candidates: Candidate[] = [
     ...fromConsole(input.consoleEvents),
     ...fromRuntime(input.runtimeErrors),
-    ...fromNetwork(input.networkFailures, input.pages),
-    ...fromAssets(input.brokenResources),
+    ...fromNetwork(input.networkFailures, input.pages, input.targetUrl),
+    ...fromAssets(input.brokenResources, input.targetUrl),
     ...fromBrokenLinks(input.brokenLinks, input.pages),
     ...fromAccessibility(input.accessibility),
     ...fromPerformance(input.performance),
@@ -189,10 +191,21 @@ function fromRuntime(errors: RuntimeErrorEvent[]): Candidate[] {
   });
 }
 
-function fromNetwork(failures: NetworkFailure[], pages: ScannedPageResult[]): Candidate[] {
+function fromNetwork(failures: NetworkFailure[], pages: ScannedPageResult[], targetUrl?: string): Candidate[] {
   const pageUrls = new Set(pages.map((p) => p.url));
   const out: Candidate[] = [];
   for (const e of failures) {
+    if (
+      !isActionableNetworkFailure({
+        status: e.status,
+        reason: e.reason,
+        resourceType: e.resourceType,
+        url: e.url,
+        startUrl: targetUrl,
+      })
+    ) {
+      continue;
+    }
     if (ASSET_TYPES.has(e.resourceType)) continue;
     const isCrawledDoc =
       e.resourceType === 'document' && pageUrls.has(e.url) && (e.status === 404 || e.status === 410 || e.status >= 500 || e.status === 0);
@@ -246,9 +259,18 @@ function networkTitle(kind: SeverityKind, isApi: boolean, status: number): strin
   return 'Network request failed';
 }
 
-function fromAssets(resources: BrokenResource[]): Candidate[] {
+function fromAssets(resources: BrokenResource[], targetUrl?: string): Candidate[] {
   return resources
     .filter((b) => ASSET_TYPES.has(b.resourceType))
+    .filter((b) =>
+      isActionableBrokenResource({
+        status: b.status,
+        failureReason: b.error,
+        resourceType: b.resourceType,
+        url: b.url,
+        startUrl: targetUrl,
+      }),
+    )
     .map((b) => {
       const label = assetLabel(b.resourceType);
       return {

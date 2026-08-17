@@ -2,12 +2,9 @@ import { chromium, devices, type Browser, type BrowserContext, type BrowserConte
 import type { ScanDevice } from '../../../src/server/types/scan-types.ts';
 import { config } from '../config.ts';
 import { log } from '../log.ts';
-import { hostOf, isFirstPartyHost } from '../url/normalize.ts';
+import { wouldTraceBlockRequest } from './resource-blocking.ts';
 
 const TRACE_SUFFIX = ' TRACE/1.0';
-
-/** Always blocked — high memory, not needed for runtime/network/a11y checks. */
-const ALWAYS_BLOCKED = new Set(['media', 'font']);
 
 export interface BrowserFactoryOptions {
   device?: ScanDevice;
@@ -60,18 +57,10 @@ export function contextOptions(opts: BrowserFactoryOptions): BrowserContextOptio
 }
 
 export async function installResourceBlocking(context: BrowserContext, startUrl: string): Promise<void> {
-  const startHost = hostOf(startUrl);
   await context.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (ALWAYS_BLOCKED.has(type)) {
+    const req = route.request();
+    if (wouldTraceBlockRequest(req.resourceType(), req.url(), startUrl)) {
       return route.abort();
-    }
-    // Block third-party images (major memory saver on large sites); keep first-party for broken-asset checks.
-    if (type === 'image' && startHost) {
-      const reqHost = hostOf(route.request().url());
-      if (reqHost && !isFirstPartyHost(reqHost, startHost)) {
-        return route.abort();
-      }
     }
     return route.continue();
   });

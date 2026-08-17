@@ -112,6 +112,17 @@ export interface NetworkFailure {
   duration: number;
 }
 
+/** Requests intentionally blocked by TRACE resource rules (not website failures). */
+export interface ScannerBlockedRequest {
+  id: string;
+  url: string;
+  method: string;
+  resourceType: ResourceType;
+  reason: string;
+  pageUrl: string;
+  duration: number;
+}
+
 export interface ApiInventoryItem {
   method: string;
   url: string;
@@ -424,6 +435,7 @@ export interface ScanResult {
     consoleBrowserEvents: number;
     runtimeErrors: number;
     networkFailures: number;
+    scannerBlockedRequests: number;
     accessibilityViolations: number;
     securityFindings: number;
     brokenAssets: number;
@@ -442,6 +454,7 @@ export interface ScanResult {
   runtimeErrors: RuntimeErrorEvent[];
   networkEvents: NetworkEvent[];
   networkFailures: NetworkFailure[];
+  scannerBlockedRequests: ScannerBlockedRequest[];
   apiInventory: ApiInventoryItem[];
   performance: PerformanceMetrics;
   accessibility: AccessibilityFinding[];
