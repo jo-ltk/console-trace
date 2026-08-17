@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 const extra = Constants.expoConfig?.extra as { apiUrl?: string } | undefined;
@@ -6,6 +7,10 @@ const extra = Constants.expoConfig?.extra as { apiUrl?: string } | undefined;
 export const PRODUCTION_API_URL = 'https://trace-api-15uf.onrender.com';
 
 function resolveApiBaseUrl(): string {
+  // Web uses same-origin API routes (EAS Hosting proxy) to avoid browser CORS limits.
+  if (Platform.OS === 'web') {
+    return '';
+  }
   const fromEnv = process.env.EXPO_PUBLIC_API_URL || extra?.apiUrl || PRODUCTION_API_URL;
   return fromEnv.replace(/\/$/, '');
 }

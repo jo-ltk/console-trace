@@ -8,6 +8,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "export:web": "EXPO_PUBLIC_API_URL=https://trace-api-15uf.onrender.com expo export --platform web",
+    "deploy:web": "npm run export:web && eas deploy --prod --non-interactive --dev-domain trace-inspector",
     "dev": "tsx server/src/api/index.ts",
     "worker": "tsx server/src/worker/index.ts",
     "test": "vitest run",
