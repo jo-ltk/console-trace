@@ -303,7 +303,7 @@ describe('CORS allowlist', () => {
   });
   it('defaults wildcard outside production', () => {
     expect(parseCorsOrigins(undefined, 'development')).toEqual(['*']);
-    expect(parseCorsOrigins(undefined, 'production')).toEqual([]);
+    expect(parseCorsOrigins(undefined, 'production')).toEqual(['https://trace-inspector.expo.app']);
   });
 });
 

@@ -1,3 +1,5 @@
+const DEFAULT_PRODUCTION_WEB_ORIGINS = ['https://trace-inspector.expo.app'];
+
 export function parseCorsOrigins(raw: string | undefined, nodeEnv: string): string[] {
   if (raw !== undefined && raw !== '') {
     return raw
@@ -5,7 +7,7 @@ export function parseCorsOrigins(raw: string | undefined, nodeEnv: string): stri
       .map((s) => s.trim())
       .filter(Boolean);
   }
-  if (nodeEnv === 'production') return [];
+  if (nodeEnv === 'production') return [...DEFAULT_PRODUCTION_WEB_ORIGINS];
   return ['*'];
 }
 

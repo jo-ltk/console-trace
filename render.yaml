@@ -84,7 +84,7 @@ envVarGroups:
       - key: ALLOW_LOCAL_TARGETS
         value: "false"
       - key: CORS_ORIGINS
-        value: ""
+        value: "https://trace-inspector.expo.app"
       - key: ARTIFACT_DIR
         value: /tmp/artifacts
       - key: SCAN_MAX_PAGES
