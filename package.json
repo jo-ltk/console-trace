@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "export:web": "EXPO_PUBLIC_API_URL=https://trace-api-15uf.onrender.com expo export --platform web",
-    "deploy:web": "npm run export:web && eas deploy --prod --non-interactive --dev-domain trace-inspector",
+    "deploy:web": "npm run export:web && eas deploy --prod --non-interactive --export-dir dist",
     "dev": "tsx server/src/api/index.ts",
     "worker": "tsx server/src/worker/index.ts",
     "test": "vitest run",
@@ -80,6 +80,7 @@
     "@babel/core": "^7.25.2",
     "@eslint/js": "^9.20.0",
     "@types/react": "~18.3.12",
+    "eas-cli": "^16.3.2",
     "eslint": "^9.20.0",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.24.0"
