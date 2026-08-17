@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/colors';
@@ -13,6 +13,7 @@ import { useAppStore } from '../../stores/useAppStore';
 import { triggerHaptic } from '../../utils/haptics';
 import { api } from '../../services/api';
 import { toClientScan } from '../../services/adapter';
+import { pollScanStatus } from '../../utils/poll-scan-status';
 
 const SCAN_STEPS = [
   { id: 'queued', title: 'Queued', statuses: ['queued'] },
@@ -25,6 +26,8 @@ const SCAN_STEPS = [
   { id: 'analyzing_security', title: 'Analyzing security', statuses: ['analyzing_security'] },
   { id: 'generating_report', title: 'Generating report', statuses: ['generating_report'] },
 ];
+
+const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
 
 function stepIndex(status: string): number {
   const i = SCAN_STEPS.findIndex((s) => s.statuses.includes(status));
@@ -45,10 +48,19 @@ export default function ScanProgressScreen() {
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [scanId, setScanId] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
+    cancelledRef.current = false;
+
+    const finishSuccess = async (id: string) => {
+      const raw = await api.getResults(id);
+      const mapped = toClientScan(raw as Record<string, unknown>);
+      addRecentScan(mapped);
+      triggerHaptic('success');
+      router.replace({ pathname: '/report' as any, params: { id: mapped.id, reveal: '1' } });
+    };
 
     const run = async () => {
       if (!targetUrl) {
@@ -56,58 +68,102 @@ export default function ScanProgressScreen() {
         setFailureReason('No target URL');
         return;
       }
+
+      setScanFailed(false);
+      setFailureReason(null);
+      setPollError(null);
+      setStatus('queued');
+
       try {
         const created = await api.createScan(targetUrl, {
           maxPages: currentConfig.advanced.maxPages,
-          maxDepth: currentConfig.advanced.interactionDepth === 'deep' ? 4 : currentConfig.advanced.interactionDepth === 'minimal' ? 1 : 3,
+          maxDepth:
+            currentConfig.advanced.interactionDepth === 'deep'
+              ? 4
+              : currentConfig.advanced.interactionDepth === 'minimal'
+                ? 1
+                : 3,
           device: currentConfig.advanced.device,
           accessibility: currentConfig.options.accessibility,
           performance: currentConfig.options.performance,
           security: true,
           interactions: currentConfig.advanced.interactionDepth !== 'minimal',
         });
-        if (cancelled) return;
+
+        if (cancelledRef.current) return;
+
         setScanId(created.scanId);
         setActiveScanId(created.scanId);
         setStatus(created.status);
 
-        let pollFailures = 0;
-        timer = setInterval(async () => {
-          try {
-            const st = await api.getStatus(created.scanId);
-            if (cancelled) return;
-            setPollError(null);
-            pollFailures = 0;
-            setStatus(st.status);
-            if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(st.status)) {
-              if (timer) clearInterval(timer);
-              if (st.status === 'failed') {
-                setScanFailed(true);
-                setFailureReason(st.statusReason || 'Scan failed');
-                triggerHaptic('error');
-                return;
-              }
-              if (st.status === 'cancelled') {
-                router.back();
-                return;
-              }
-              const raw = await api.getResults(created.scanId);
-              const mapped = toClientScan(raw as Record<string, unknown>);
-              addRecentScan(mapped);
-              triggerHaptic('success');
-              router.replace({ pathname: '/report' as any, params: { id: mapped.id, reveal: '1' } });
-            }
-          } catch (e) {
-            if (!cancelled) {
-              pollFailures += 1;
-              if (pollFailures >= 3) {
-                setPollError((e as Error).message);
-              }
-            }
+        let terminalHandled = false;
+
+        const handleTerminal = async (st: { status: string; statusReason?: string }) => {
+          if (cancelledRef.current || terminalHandled) return;
+          setStatus(st.status);
+          setPollError(null);
+
+          if (st.status === 'failed') {
+            terminalHandled = true;
+            setScanFailed(true);
+            setFailureReason(st.statusReason || 'Scan failed');
+            triggerHaptic('error');
+            return;
           }
-        }, 1000);
+          if (st.status === 'cancelled') {
+            terminalHandled = true;
+            router.back();
+            return;
+          }
+          if (TERMINAL.has(st.status)) {
+            terminalHandled = true;
+            await finishSuccess(created.scanId);
+          }
+        };
+
+        const unsubscribeSse =
+          Platform.OS === 'web'
+            ? api.subscribeScanEvents(
+                created.scanId,
+                (payload) => {
+                  void handleTerminal(payload);
+                },
+                () => {
+                  /* polling continues as fallback */
+                },
+              )
+            : () => undefined;
+
+        try {
+          await pollScanStatus({
+            scanId: created.scanId,
+            shouldCancel: () => cancelledRef.current || terminalHandled,
+            onStatus: (st) => {
+              setStatus(st.status);
+              setPollError(null);
+              if (TERMINAL.has(st.status)) {
+                void handleTerminal(st);
+              }
+            },
+            onError: (err, failures) => {
+              if (failures >= 2) {
+                setPollError(err.message);
+              }
+            },
+            intervalMs: 2500,
+            maxFailures: 40,
+          });
+        } catch (err) {
+          if (!cancelledRef.current && !terminalHandled) {
+            setScanFailed(true);
+            setFailureReason((err as Error).message);
+            triggerHaptic('error');
+          }
+        } finally {
+          unsubscribeSse();
+        }
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelledRef.current) {
           setScanFailed(true);
           setFailureReason((e as Error).message);
           triggerHaptic('error');
@@ -117,10 +173,9 @@ export default function ScanProgressScreen() {
 
     run();
     return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
+      cancelledRef.current = true;
     };
-  }, [targetUrl]);
+  }, [targetUrl, retryToken]);
 
   const idx = stepIndex(status);
   const progressPercent = Math.round(((idx + 1) / SCAN_STEPS.length) * 100);
@@ -170,14 +225,32 @@ export default function ScanProgressScreen() {
             const isCurrent = i === idx;
             return (
               <View key={step.id} style={styles.stepItem}>
-                <Text style={[Typography.pixelLabel, { color: isDone ? Colors.success : isCurrent ? Colors.accent : Colors.border }]}>
+                <Text
+                  style={[
+                    Typography.pixelLabel,
+                    { color: isDone ? Colors.success : isCurrent ? Colors.accent : Colors.border },
+                  ]}
+                >
                   {isDone ? '[DONE]' : isCurrent ? '[BUSY]' : '[WAIT]'}
                 </Text>
-                <Text style={[Typography.caption, { color: Colors.ink, marginLeft: Spacing.sm }]}>{step.title}</Text>
+                <Text style={[Typography.caption, { color: Colors.ink, marginLeft: Spacing.sm }]}>
+                  {step.title}
+                </Text>
               </View>
             );
           })}
         </View>
+
+        {scanFailed && (
+          <TraceButton
+            label="RETRY CONNECTION"
+            onPress={() => {
+              triggerHaptic('light');
+              setRetryToken((t) => t + 1);
+            }}
+            style={styles.retryBtn}
+          />
+        )}
 
         <TraceButton
           label="ABORT SCAN"
@@ -222,5 +295,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   stepItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
+  retryBtn: { width: '100%', marginBottom: Spacing.sm },
   abortBtn: { width: '100%' },
 });
