@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -26,6 +26,7 @@ export default function RootLayout() {
   const [isReady, setIsReady] = useState(true);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     api
       .listScans()
       .then((rows) => {

@@ -132,7 +132,8 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          {/* Recent Scans Section */}
+          {/* Recent scans are hidden on web demo — URL → scan → report only */}
+          {Platform.OS !== 'web' && (
           <View style={styles.recentSection}>
             <View style={styles.recentHeader}>
               <Text style={[Typography.pixelLabel, styles.sectionLabel]}>
@@ -194,6 +195,7 @@ export default function HomeScreen() {
               ))
             )}
           </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 

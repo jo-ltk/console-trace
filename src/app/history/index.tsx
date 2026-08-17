@@ -1,13 +1,13 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { Spacing } from '../../constants/spacing';
 import { Typography } from '../../constants/typography';
-import { Radii } from '../../constants/radii';
 import { TraceHeader } from '../../components/ui/TraceHeader';
 import { TraceCard } from '../../components/ui/TraceCard';
+import { TraceButton } from '../../components/ui/TraceButton';
 import { BottomNavigation } from '../../components/ui/BottomNavigation';
 import { useAppStore } from '../../stores/useAppStore';
 import { api } from '../../services/api';
@@ -20,6 +20,7 @@ export default function HistoryScreen() {
   const setRecentScans = useAppStore((s) => s.setRecentScans);
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     api
       .listScans()
       .then((rows) => {
@@ -48,6 +49,26 @@ export default function HistoryScreen() {
       })
       .catch(() => undefined);
   }, [setRecentScans]);
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={[styles.contentContainer, { paddingBottom: insets.bottom + 96 }]}>
+          <TraceHeader statusText="OBSERVATION HISTORY" statusType="idle" />
+          <TraceCard variant="surface" style={styles.emptyCard}>
+            <Text style={[Typography.headline, { color: Colors.ink, marginBottom: 4 }]}>
+              History is not shown in the web demo.
+            </Text>
+            <Text style={[Typography.bodySmall, { color: Colors.muted, marginBottom: Spacing.lg }]}>
+              Enter a URL on the Scan tab to run a live inspection and view the report.
+            </Text>
+            <TraceButton label="GO TO SCAN" onPress={() => router.replace('/' as any)} size="md" />
+          </TraceCard>
+        </View>
+        <BottomNavigation />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>

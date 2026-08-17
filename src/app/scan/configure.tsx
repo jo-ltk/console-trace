@@ -172,7 +172,7 @@ export default function ScanConfigureScreen() {
                 </Text>
               </View>
               <View style={styles.segmentedControl}>
-                {[1, 5, 10].map((num) => (
+                {[1, 3, 5].map((num) => (
                   <TouchableOpacity
                     key={num}
                     style={[styles.segmentBtn, maxPages === num && styles.segmentActive]}

@@ -41,8 +41,8 @@ export async function enqueueScan(scanId: string, url: string, options: ScanOpti
       jobId: scanId,
       attempts: 2,
       backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: { count: 200 },
-      removeOnFail: { count: 200 },
+      removeOnComplete: { count: 50 },
+      removeOnFail: { count: 50 },
     },
   );
 }

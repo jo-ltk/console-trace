@@ -14,6 +14,7 @@ import { assertSafeUrl, SsrfError } from '../security/ssrf.ts';
 import { onShutdown } from '../process/shutdown.ts';
 import type { ScanResult } from '../../../src/server/types/scan-types.ts';
 import { shouldAutoStartApi } from './entry.ts';
+import { clampScanOptions } from './scan-options.ts';
 
 export { shouldAutoStartApi };
 
@@ -21,8 +22,8 @@ const ScanBody = z.object({
   url: z.string().min(1),
   options: z
     .object({
-      maxPages: z.number().int().min(1).max(100).optional(),
-      maxDepth: z.number().int().min(0).max(10).optional(),
+      maxPages: z.number().int().min(1).max(10).optional(),
+      maxDepth: z.number().int().min(0).max(3).optional(),
       timeout: z.number().int().min(1000).max(120000).optional(),
       device: z.enum(['mobile', 'desktop']).optional(),
       interactions: z.boolean().optional(),
@@ -105,7 +106,7 @@ export async function buildApp(opts?: { disableRateLimit?: boolean }) {
       try {
         const normalized = await assertSafeUrl(parsed.data.url);
         const scanId = randomUUID();
-        const options = parsed.data.options ?? {};
+        const options = clampScanOptions(parsed.data.options ?? {});
         await insertScan({
           id: scanId,
           url: parsed.data.url,

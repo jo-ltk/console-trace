@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { Radii } from '../../constants/radii';
@@ -23,6 +23,10 @@ export const BottomNavigation: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
 
+  const navItems = Platform.OS === 'web'
+    ? NAV_ITEMS.filter((item) => item.key !== 'history')
+    : NAV_ITEMS;
+
   const getActiveKey = () => {
     if (pathname === '/history' || pathname.startsWith('/history/')) return 'history';
     if (pathname === '/settings' || pathname.startsWith('/settings/')) return 'settings';
@@ -40,7 +44,7 @@ export const BottomNavigation: React.FC = () => {
   return (
     <View style={styles.floatingWrapper} pointerEvents="box-none">
       <View style={styles.container}>
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isActive = item.key === activeKey;
           return (
             <Pressable

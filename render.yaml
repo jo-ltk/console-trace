@@ -88,24 +88,30 @@ envVarGroups:
       - key: ARTIFACT_DIR
         value: /tmp/artifacts
       - key: SCAN_MAX_PAGES
-        value: "20"
+        value: "5"
       - key: SCAN_HARD_MAX_PAGES
-        value: "100"
+        value: "10"
       - key: SCAN_MAX_DEPTH
-        value: "3"
+        value: "1"
       - key: SCAN_MAX_DURATION
         value: "180000"
       - key: SCAN_PAGE_TIMEOUT
         value: "30000"
       - key: SCAN_MAX_REQUESTS
-        value: "500"
+        value: "100"
+      - key: SCAN_MAX_CONSOLE_EVENTS
+        value: "200"
+      - key: SCAN_MAX_RUNTIME_ERRORS
+        value: "100"
       - key: SCAN_BROWSER_CONCURRENCY
         value: "1"
+      - key: SCAN_SCREENSHOTS_ENABLED
+        value: "false"
       - key: SCAN_MAX_SCREENSHOT_BYTES
-        value: "8000000"
+        value: "512000"
       - key: SCAN_MAX_RESPONSE_BODY_BYTES
-        value: "1048576"
+        value: "32768"
       - key: SCAN_PROBE_MAX_REQUESTS
-        value: "50"
+        value: "20"
       - key: LOG_LEVEL
         value: info

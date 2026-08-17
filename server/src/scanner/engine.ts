@@ -128,7 +128,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
 
   try {
     browser = await launchBrowser();
-    context = await createScanContext(browser, { device: opts.device, timeout: opts.timeout });
+    context = await createScanContext(browser, { device: opts.device, timeout: opts.timeout, startUrl: input.url });
     await context.addInitScript(() => {
       window.addEventListener('unhandledrejection', (ev) => {
         const reason = ev.reason;
@@ -223,23 +223,19 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
               });
             }
           }
-          try {
-            const buf = await page.screenshot({ fullPage: true, type: 'png' });
-            const vp = await page.screenshot({ fullPage: false, type: 'png' });
-            const dir = path.join(config.artifactDir, input.scanId);
-            await fs.mkdir(dir, { recursive: true });
-            if (buf.length <= config.maxScreenshotBytes) {
-              const p = path.join(dir, 'homepage.png');
-              await fs.writeFile(p, buf);
-              screenshots.homepage = p;
+          if (config.scanScreenshotsEnabled) {
+            try {
+              const vp = await page.screenshot({ fullPage: false, type: 'png' });
+              const dir = path.join(config.artifactDir, input.scanId);
+              await fs.mkdir(dir, { recursive: true });
+              if (vp.length <= config.maxScreenshotBytes) {
+                const p = path.join(dir, 'viewport.png');
+                await fs.writeFile(p, vp);
+                screenshots.viewport = p;
+              }
+            } catch (err) {
+              warnings.push(`screenshot UNAVAILABLE: ${(err as Error).message}`);
             }
-            if (vp.length <= config.maxScreenshotBytes) {
-              const p = path.join(dir, 'viewport.png');
-              await fs.writeFile(p, vp);
-              screenshots.viewport = p;
-            }
-          } catch (err) {
-            warnings.push(`screenshot UNAVAILABLE: ${(err as Error).message}`);
           }
         }
 
@@ -358,15 +354,19 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
           type: 'execution_failure',
         });
         if (!screenshots.errorPages) screenshots.errorPages = {};
-        try {
-          const buf = await page.screenshot({ type: 'png' });
-          const dir = path.join(config.artifactDir, input.scanId);
-          await fs.mkdir(dir, { recursive: true });
-          const p = path.join(dir, `error-${visited.size}.png`);
-          await fs.writeFile(p, buf);
-          screenshots.errorPages[`page-${visited.size}`] = p;
-        } catch {
-          /* ignore */
+        if (config.scanScreenshotsEnabled) {
+          try {
+            const buf = await page.screenshot({ fullPage: false, type: 'png' });
+            if (buf.length <= config.maxScreenshotBytes) {
+              const dir = path.join(config.artifactDir, input.scanId);
+              await fs.mkdir(dir, { recursive: true });
+              const p = path.join(dir, `error-${visited.size}.png`);
+              await fs.writeFile(p, buf);
+              screenshots.errorPages[`page-${visited.size}`] = p;
+            }
+          } catch {
+            /* ignore */
+          }
         }
       } finally {
         await page.close().catch(() => undefined);
@@ -597,26 +597,32 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
   }
 
   function attachObservers(page: Page) {
+    const atNetworkCap = () => networkEvents.length >= config.scanMaxRequests;
+
     page.on('console', (msg) => {
+      if (consoleEvents.length >= config.scanMaxConsoleEvents) return;
       const loc = msg.location();
       const type = mapPlaywrightConsoleType(msg.type());
-      const text = redactText(msg.text());
+      const text = redactText(msg.text()).slice(0, 2_000);
       if (text.startsWith('[TRACE_UNHANDLED_REJECTION]')) {
         const rest = text.replace('[TRACE_UNHANDLED_REJECTION]', '').trim();
-        runtimeErrors.push({
-          id: id(),
-          message: rest.split('\n')[0] || rest,
-          stack: rest,
-          pageUrl: currentPageUrl,
-          timestamp: nowIso(),
-          type: 'unhandled_rejection',
-        });
+        if (runtimeErrors.length < config.scanMaxRuntimeErrors) {
+          runtimeErrors.push({
+            id: id(),
+            message: rest.split('\n')[0] || rest,
+            stack: rest.slice(0, 4_000),
+            pageUrl: currentPageUrl,
+            timestamp: nowIso(),
+            type: 'unhandled_rejection',
+          });
+        }
         return;
       }
       const args: string[] = [];
       try {
         for (const a of msg.args()) {
-          args.push(String(a));
+          if (args.length >= 5) break;
+          args.push(String(a).slice(0, 500));
         }
       } catch {
         /* not serializable */
@@ -638,11 +644,12 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
     });
 
     page.on('pageerror', (err) => {
+      if (runtimeErrors.length >= config.scanMaxRuntimeErrors) return;
       const parsed = parseStack(err.stack ?? '');
       runtimeErrors.push({
         id: id(),
-        message: err.message,
-        stack: err.stack,
+        message: err.message.slice(0, 2_000),
+        stack: err.stack?.slice(0, 4_000),
         pageUrl: currentPageUrl,
         timestamp: nowIso(),
         sourceUrl: parsed.source,
@@ -653,6 +660,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
     });
 
     page.on('crash', () => {
+      if (runtimeErrors.length >= config.scanMaxRuntimeErrors) return;
       runtimeErrors.push({
         id: id(),
         message: 'Browser page crashed',
@@ -664,7 +672,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
 
     page.on('request', (req) => {
       requestStarts.set(req, Date.now());
-      if (req.resourceType() === 'websocket') {
+      if (req.resourceType() === 'websocket' && webSockets.length < config.scanMaxRequests) {
         webSockets.push({
           url: redactUrl(req.url()),
           pageUrl: currentPageUrl,
@@ -675,7 +683,9 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
     });
 
     page.on('requestfailed', (req) => {
+      if (atNetworkCap()) return;
       const start = requestStarts.get(req) ?? Date.now();
+      requestStarts.delete(req);
       const duration = Date.now() - start;
       const failure = req.failure()?.errorText ?? 'request failed';
       const resourceType = mapResourceType(req.resourceType());
@@ -694,7 +704,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
         apiType: classifyApi({ resourceType, method: req.method(), url: req.url(), postData: req.postData() ?? undefined }).apiType,
       };
       networkEvents.push(ev);
-      if (!isBenignRequestFailure(failure)) {
+      if (!isBenignRequestFailure(failure) && networkFailures.length < config.scanMaxRequests) {
         networkFailures.push({
           id: id(),
           url: ev.url,
@@ -709,9 +719,10 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
     });
 
     page.on('response', async (res) => {
-      if (networkEvents.length >= config.scanMaxRequests) return;
+      if (atNetworkCap()) return;
       const req = res.request();
       const start = requestStarts.get(req) ?? Date.now();
+      requestStarts.delete(req);
       const duration = Date.now() - start;
       const resourceType = mapResourceType(req.resourceType());
       const headers = redactHeaders(res.headers());
@@ -748,7 +759,7 @@ export async function runScanEngine(input: EngineInput): Promise<ScanResult> {
           securityFindings.push(...analyzeCorsHeaders(res.headers(), req.url()));
         }
       }
-      if (status >= 400) {
+      if (status >= 400 && networkFailures.length < config.scanMaxRequests) {
         networkFailures.push({
           id: id(),
           url: ev.url,
@@ -829,9 +840,10 @@ function buildThirdParty(events: NetworkEvent[], startUrl: string): ThirdPartyDo
 
 function normalizeOptions(o: ScanOptions) {
   const maxPages = Math.min(o.maxPages ?? config.scanMaxPages, config.scanHardMaxPages);
+  const maxDepth = Math.min(o.maxDepth ?? config.scanMaxDepth, config.scanMaxDepth);
   return {
     maxPages: Math.max(1, maxPages),
-    maxDepth: o.maxDepth ?? config.scanMaxDepth,
+    maxDepth: Math.max(0, maxDepth),
     timeout: o.timeout ?? config.scanPageTimeoutMs,
     device: o.device ?? 'mobile',
     interactions: o.interactions ?? false,

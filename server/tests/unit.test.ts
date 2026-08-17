@@ -320,3 +320,12 @@ describe('API process entry detection', () => {
     expect(shouldAutoStartApi(['node', '/app/node_modules/vitest/vitest.mjs'])).toBe(false);
   });
 });
+
+describe('clampScanOptions', () => {
+  it('clamps pages and depth to configured limits', async () => {
+    const { clampScanOptions } = await import('../src/api/scan-options.ts');
+    const clamped = clampScanOptions({ maxPages: 100, maxDepth: 5 });
+    expect(clamped.maxPages).toBeLessThanOrEqual(10);
+    expect(clamped.maxDepth).toBeLessThanOrEqual(1);
+  });
+});
